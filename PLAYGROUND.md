@@ -37,7 +37,7 @@ Repo config lives in `.lazycompass/` and is git-committable:
 ## Try the CLI
 
 ```bash
-cargo run -p lazycompass-cli -- query active_users
-cargo run -p lazycompass-cli -- query --db lazycompass --collection users --filter '{"active": true}'
-cargo run -p lazycompass-cli -- agg orders_by_user --table
+cargo run -p lazycompass -- query active_users
+cargo run -p lazycompass -- query --db lazycompass --collection users --filter '{"active": true}'
+cargo run -p lazycompass -- agg orders_by_user --table
 ```

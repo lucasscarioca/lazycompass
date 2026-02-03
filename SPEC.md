@@ -57,8 +57,8 @@ Build a fast, ergonomic, and collaborative MongoDB TUI that:
 
 Rust workspace with focused crates:
 
-- lazycompass-cli: CLI entrypoint for fast queries/aggregations
-- lazycompass-tui: TUI application
+- lazycompass: unified binary (TUI by default, CLI via subcommands)
+- lazycompass-tui: TUI library
 - lazycompass-core: shared domain models and validation
 - lazycompass-storage: config, persistence, and path resolution
 - lazycompass-mongo: MongoDB connection and execution layer
@@ -122,6 +122,7 @@ The filter/projection/sort/pipeline values are JSON strings for compatibility wi
 
 ## 9. CLI Requirements
 
+- CLI is available via `lazycompass <command>` (default runs TUI)
 - Run a saved query or aggregation by name
 - Run inline query/aggregation without saving
 - Default output is pretty JSON

@@ -10,7 +10,7 @@ use lazycompass_storage::ConfigPaths;
 #[command(about = "MongoDB TUI + CLI client", version)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -59,17 +59,22 @@ struct AggArgs {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let cwd = std::env::current_dir().context("unable to resolve current directory")?;
-    let paths = ConfigPaths::resolve_from(&cwd)?;
 
     match cli.command {
-        Commands::Query(args) => {
+        Some(Commands::Query(args)) => {
+            let cwd = std::env::current_dir().context("unable to resolve current directory")?;
+            let paths = ConfigPaths::resolve_from(&cwd)?;
             let request = build_query_request(args)?;
             print_query_summary(&request, &paths);
         }
-        Commands::Agg(args) => {
+        Some(Commands::Agg(args)) => {
+            let cwd = std::env::current_dir().context("unable to resolve current directory")?;
+            let paths = ConfigPaths::resolve_from(&cwd)?;
             let request = build_agg_request(args)?;
             print_agg_summary(&request, &paths);
+        }
+        None => {
+            lazycompass_tui::run()?;
         }
     }
 

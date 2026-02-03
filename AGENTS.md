@@ -11,8 +11,8 @@ This file guides agentic coding assistants working in this repo.
 
 Workspace crates:
 
-- `lazycompass-cli`: CLI entrypoint (queries/aggregations)
-- `lazycompass-tui`: TUI entrypoint
+- `lazycompass` (binary) in `lazycompass-cli/`
+- `lazycompass-tui`: TUI library
 - `lazycompass-core`: shared domain models
 - `lazycompass-storage`: config paths + persistence
 - `lazycompass-mongo`: MongoDB execution layer
@@ -30,8 +30,7 @@ Build:
 
 ```
 cargo build
-cargo build -p lazycompass-cli
-cargo build -p lazycompass-tui
+cargo build -p lazycompass
 ```
 
 Format:
@@ -82,6 +81,28 @@ Run doc tests (if added later):
 ```
 cargo test --doc
 ```
+
+## Git Hooks (Optional)
+
+This repo includes a `lefthook.yml` config for pre-commit and pre-push hooks.
+
+Install and enable:
+
+```
+lefthook install
+```
+
+The hooks run:
+
+Pre-commit:
+
+- `cargo fmt --check`
+- `cargo clippy --workspace -- -D warnings`
+
+Pre-push:
+
+- `cargo build --workspace`
+- `cargo test --workspace`
 
 ## Playground (MongoDB via Docker)
 
@@ -192,4 +213,4 @@ Follow Rust 2024 edition idioms and keep changes minimal and consistent.
 - Do not delete or rewrite existing user changes without approval
 - Avoid destructive git commands
 - Keep `.lazycompass/` contents in sync with sample data
-
+- When the user requests a commit, create it after finishing the relevant work

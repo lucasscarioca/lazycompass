@@ -818,13 +818,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "lazycompass-cli"
+name = "lazycompass"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "lazycompass-core",
  "lazycompass-storage",
+ "lazycompass-tui",
 ]
 
 [[package]]
