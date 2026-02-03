@@ -1,0 +1,11 @@
+[package]
+name = "lazycompass-cli"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+lazycompass-core = { path = "../lazycompass-core" }
+lazycompass-storage = { path = "../lazycompass-storage" }

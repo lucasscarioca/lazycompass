@@ -1,0 +1,12 @@
+[package]
+name = "lazycompass-storage"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+anyhow = { workspace = true }
+dirs = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+lazycompass-core = { path = "../lazycompass-core" }

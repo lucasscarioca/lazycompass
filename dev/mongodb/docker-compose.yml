@@ -1,0 +1,14 @@
+services:
+  mongodb:
+    image: mongo:6.0
+    container_name: lazycompass-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: lazycompass
+    volumes:
+      - lazycompass-mongo-data:/data/db
+      - ./init:/docker-entrypoint-initdb.d:ro
+
+volumes:
+  lazycompass-mongo-data:
