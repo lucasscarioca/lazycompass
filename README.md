@@ -8,7 +8,7 @@ Status: **early stage, under active development**. Expect breaking changes.
 
 ## Installation
 
-From source (recommended for now):
+From source (recommended for now, requires Rust toolchain):
 
 ```bash
 ./install.sh
@@ -18,6 +18,12 @@ Or via Cargo directly:
 
 ```bash
 cargo install --path . -p lazycompass --locked
+```
+
+Upgrade (re-runs the installer):
+
+```bash
+lazycompass upgrade
 ```
 
 ## Usage

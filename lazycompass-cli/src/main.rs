@@ -4,6 +4,8 @@ use lazycompass_core::{
     AggregationRequest, AggregationTarget, OutputFormat, QueryRequest, QueryTarget,
 };
 use lazycompass_storage::ConfigPaths;
+use std::path::Path;
+use std::process::Command;
 
 #[derive(Parser)]
 #[command(name = "lazycompass")]
@@ -17,6 +19,7 @@ struct Cli {
 enum Commands {
     Query(QueryArgs),
     Agg(AggArgs),
+    Upgrade(UpgradeArgs),
 }
 
 #[derive(Args)]
@@ -57,6 +60,18 @@ struct AggArgs {
     table: bool,
 }
 
+#[derive(Args)]
+struct UpgradeArgs {
+    #[arg(long)]
+    version: Option<String>,
+    #[arg(long)]
+    repo: Option<String>,
+    #[arg(long)]
+    from_source: bool,
+    #[arg(long)]
+    no_modify_path: bool,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -72,6 +87,9 @@ fn main() -> Result<()> {
             let paths = ConfigPaths::resolve_from(&cwd)?;
             let request = build_agg_request(args)?;
             print_agg_summary(&request, &paths);
+        }
+        Some(Commands::Upgrade(args)) => {
+            run_upgrade(args)?;
         }
         None => {
             lazycompass_tui::run()?;
@@ -209,4 +227,55 @@ fn print_path_summary(paths: &ConfigPaths) {
         Some(path) => println!("- repo config: {}", path.display()),
         None => println!("- repo config: (none)"),
     }
+}
+
+fn run_upgrade(args: UpgradeArgs) -> Result<()> {
+    let mut installer_args = Vec::new();
+    if let Some(version) = args.version {
+        installer_args.push("--version".to_string());
+        installer_args.push(version);
+    }
+    if let Some(repo) = args.repo {
+        installer_args.push("--repo".to_string());
+        installer_args.push(repo);
+    }
+    if args.from_source {
+        installer_args.push("--from-source".to_string());
+    }
+    if args.no_modify_path {
+        installer_args.push("--no-modify-path".to_string());
+    }
+
+    if let Ok(url) = std::env::var("LAZYCOMPASS_INSTALL_URL") {
+        let status = Command::new("bash")
+            .arg("-c")
+            .arg("curl -fsSL \"$1\" | bash -s -- \"${@:2}\"")
+            .arg("bash")
+            .arg(url)
+            .args(&installer_args)
+            .status()
+            .context("failed to run installer from LAZYCOMPASS_INSTALL_URL")?;
+        if !status.success() {
+            anyhow::bail!("installer exited with non-zero status");
+        }
+        return Ok(());
+    }
+
+    if Path::new("install.sh").is_file() {
+        let status = Command::new("bash")
+            .arg("install.sh")
+            .args(&installer_args)
+            .status()
+            .context("failed to run install.sh")?;
+        if !status.success() {
+            anyhow::bail!("install.sh exited with non-zero status");
+        }
+        return Ok(());
+    }
+
+    println!("lazycompass upgrade");
+    println!("- install.sh not found in current directory");
+    println!("- set LAZYCOMPASS_INSTALL_URL or re-run ./install.sh from the repo");
+    println!("- or reinstall with: cargo install --path . -p lazycompass --locked");
+    Ok(())
 }
