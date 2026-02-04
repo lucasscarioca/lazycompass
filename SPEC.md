@@ -253,6 +253,13 @@ lazycompass agg --db app --collection users --pipeline '[{"$match": {"active": t
 - Consistent CLI exit codes for automation
 - Log file rotation or size limits
 
+Exit codes:
+
+- 0: success
+- 1: user error (invalid args, missing inputs)
+- 2: config error (TOML or config file issues)
+- 3: network error (connection/timeout)
+
 ### 12.5 Release and Compatibility
 
 - Semantic versioning for user-facing changes

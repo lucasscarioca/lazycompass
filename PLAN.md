@@ -88,7 +88,7 @@ Deliverables:
 
 ### 7.4 Observability and Operations
 
-Status: in progress
+Status: complete
 
 Scope:
 - Structured logs with consistent fields
@@ -100,7 +100,7 @@ Tasks:
   - command, component, connection name (redacted), database, collection
 - [x] Implement log file rotation or max-size cap
   - Define retention policy in config
-- [ ] Define exit codes for CLI
+- [x] Define exit codes for CLI
   - Success, user error, config error, network error
 
 Deliverables:

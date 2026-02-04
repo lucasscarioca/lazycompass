@@ -123,25 +123,48 @@ fn report_error(error: &anyhow::Error) {
     }
 }
 
-const EXIT_ERROR: i32 = 1;
+const EXIT_USER: i32 = 1;
 const EXIT_CONFIG: i32 = 2;
+const EXIT_NETWORK: i32 = 3;
 
 fn exit_code(error: &anyhow::Error) -> i32 {
     if error_chain_has::<std::io::Error>(error) || config_message_matches(error) {
         return EXIT_CONFIG;
     }
-    EXIT_ERROR
+    if network_message_matches(error) {
+        return EXIT_NETWORK;
+    }
+    EXIT_USER
 }
 
 fn config_message_matches(error: &anyhow::Error) -> bool {
-    let message = error.to_string().to_ascii_lowercase();
-    message.contains("config") || message.contains("toml")
+    error_chain_matches(error, |message| {
+        message.contains("config") || message.contains("toml")
+    })
+}
+
+fn network_message_matches(error: &anyhow::Error) -> bool {
+    error_chain_matches(error, |message| {
+        message.contains("unable to connect")
+            || message.contains("failed to connect")
+            || message.contains("server selection")
+            || message.contains("network")
+            || message.contains("timed out")
+            || message.contains("timeout")
+    })
 }
 
 fn error_chain_has<T: std::error::Error + 'static>(error: &anyhow::Error) -> bool {
     error
         .chain()
         .any(|cause| cause.downcast_ref::<T>().is_some())
+}
+
+fn error_chain_matches(error: &anyhow::Error, predicate: impl Fn(&str) -> bool) -> bool {
+    error.chain().any(|cause| {
+        let message = cause.to_string().to_ascii_lowercase();
+        predicate(&message)
+    })
 }
 
 fn build_query_request(args: QueryArgs) -> Result<QueryRequest> {
