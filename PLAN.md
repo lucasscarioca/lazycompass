@@ -76,7 +76,7 @@ Tasks:
 - [x] Add connect and query timeout configuration
   - Expose defaults in config
   - Ensure timeouts are applied in mongo executor
-- [ ] Provide retry guidance or automatic retry for safe operations
+- [x] Provide retry guidance or automatic retry for safe operations
   - Document behavior and limits
 - [ ] Improve error surfaces
   - CLI: clear error messages + exit codes

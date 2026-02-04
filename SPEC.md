@@ -240,6 +240,8 @@ lazycompass agg --db app --collection users --pipeline '[{"$match": {"active": t
 - Configurable timeouts for connect and query operations
 - Clear handling for transient errors and network disconnects
 - Non-blocking UI interactions with visible loading/error states
+- No automatic retries yet; re-run safe read-only operations on transient failures
+- Never retry writes automatically unless the operation is explicitly idempotent
 
 ### 12.4 Observability and Operations
 
