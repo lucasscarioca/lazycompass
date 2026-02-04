@@ -1,13 +1,16 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use lazycompass_core::{
-    AggregationRequest, AggregationTarget, OutputFormat, QueryRequest, QueryTarget,
+    AggregationRequest, AggregationTarget, Config, OutputFormat, QueryRequest, QueryTarget,
 };
 use lazycompass_mongo::{AggregationSpec, Bson, Document, MongoExecutor, QuerySpec};
-use lazycompass_storage::{ConfigPaths, StorageSnapshot, load_storage};
+use lazycompass_storage::{ConfigPaths, StorageSnapshot, load_config, load_storage, log_file_path};
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::Path;
 use std::process::Command;
+use tracing_subscriber::filter::{LevelFilter, Targets};
+use tracing_subscriber::layer::SubscriberExt;
 
 const DEFAULT_INSTALL_URL: &str =
     "https://raw.githubusercontent.com/lucasscarioca/lazycompass/main/install.sh";
@@ -87,6 +90,11 @@ fn main() -> Result<()> {
             run_upgrade(args)?;
         }
         None => {
+            let cwd = std::env::current_dir().context("unable to resolve current directory")?;
+            let paths = ConfigPaths::resolve_from(&cwd)?;
+            let config = load_config(&paths)?;
+            init_logging(&paths, &config)?;
+            tracing::info!(command = "tui", "lazycompass started");
             lazycompass_tui::run()?;
         }
     }
@@ -216,6 +224,8 @@ fn run_query(args: QueryArgs) -> Result<()> {
     let paths = ConfigPaths::resolve_from(&cwd)?;
     let request = build_query_request(args)?;
     let storage = load_storage(&paths)?;
+    init_logging(&paths, &storage.config)?;
+    tracing::info!(command = "query", "lazycompass started");
     report_warnings(&storage);
     let spec = resolve_query_spec(&request, &storage)?;
     let executor = MongoExecutor::new();
@@ -229,12 +239,64 @@ fn run_agg(args: AggArgs) -> Result<()> {
     let paths = ConfigPaths::resolve_from(&cwd)?;
     let request = build_agg_request(args)?;
     let storage = load_storage(&paths)?;
+    init_logging(&paths, &storage.config)?;
+    tracing::info!(command = "agg", "lazycompass started");
     report_warnings(&storage);
     let spec = resolve_aggregation_spec(&request, &storage)?;
     let executor = MongoExecutor::new();
     let runtime = tokio::runtime::Runtime::new().context("unable to start async runtime")?;
     let documents = runtime.block_on(executor.execute_aggregation(&storage.config, &spec))?;
     print_documents(request.output, &documents)
+}
+
+fn init_logging(paths: &ConfigPaths, config: &Config) -> Result<()> {
+    let log_path = log_file_path(paths, config);
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("unable to create log directory {}", parent.display()))?;
+    }
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .with_context(|| format!("unable to open log file {}", log_path.display()))?;
+    let (level, warning) = parse_log_level(config.logging.level.as_deref());
+    if let Some(warning) = warning {
+        eprintln!("warning: {warning}");
+    }
+    let filter = Targets::new()
+        .with_target("lazycompass", level)
+        .with_target("lazycompass_tui", level)
+        .with_target("lazycompass_storage", level)
+        .with_target("lazycompass_mongo", level)
+        .with_target("lazycompass_core", level)
+        .with_default(LevelFilter::WARN);
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_ansi(false)
+        .with_target(false)
+        .with_writer(file);
+    let subscriber = tracing_subscriber::registry().with(filter).with(fmt_layer);
+    tracing::subscriber::set_global_default(subscriber).context("unable to initialize logging")?;
+    Ok(())
+}
+
+fn parse_log_level(level: Option<&str>) -> (LevelFilter, Option<String>) {
+    let raw = level.unwrap_or("info");
+    let normalized = raw.trim().to_ascii_lowercase();
+    let parsed = match normalized.as_str() {
+        "trace" => LevelFilter::TRACE,
+        "debug" => LevelFilter::DEBUG,
+        "info" => LevelFilter::INFO,
+        "warn" | "warning" => LevelFilter::WARN,
+        "error" => LevelFilter::ERROR,
+        _ => {
+            return (
+                LevelFilter::INFO,
+                Some(format!("invalid log level '{raw}', using info")),
+            );
+        }
+    };
+    (parsed, None)
 }
 
 fn report_warnings(storage: &StorageSnapshot) {

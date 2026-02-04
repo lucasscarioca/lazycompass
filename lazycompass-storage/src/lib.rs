@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use lazycompass_core::{Config, SavedAggregation, SavedQuery};
+use lazycompass_core::{Config, LoggingConfig, SavedAggregation, SavedQuery};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -87,6 +87,14 @@ pub fn load_config(paths: &ConfigPaths) -> Result<Config> {
     };
 
     Ok(merge_config(global, repo))
+}
+
+pub fn log_file_path(paths: &ConfigPaths, config: &Config) -> PathBuf {
+    match config.logging.file.as_deref() {
+        Some(path) if Path::new(path).is_absolute() => PathBuf::from(path),
+        Some(path) => paths.global_root.join(path),
+        None => paths.global_root.join("lazycompass.log"),
+    }
 }
 
 pub fn load_saved_queries(paths: &ConfigPaths) -> Result<(Vec<SavedQuery>, Vec<String>)> {
@@ -230,8 +238,16 @@ fn merge_config(global: Config, repo: Config) -> Config {
     } else {
         global.theme
     };
+    let logging = LoggingConfig {
+        level: repo.logging.level.or(global.logging.level),
+        file: repo.logging.file.or(global.logging.file),
+    };
 
-    Config { connections, theme }
+    Config {
+        connections,
+        theme,
+        logging,
+    }
 }
 
 fn normalize_saved_name(name: &str) -> Result<String> {
@@ -369,6 +385,10 @@ uri = "mongodb://global_only"
 
 [theme]
 name = "classic"
+
+[logging]
+level = "info"
+file = "global.log"
 "#,
         );
         write_file(
@@ -384,6 +404,10 @@ uri = "mongodb://repo_only"
 
 [theme]
 name = "ember"
+
+[logging]
+level = "debug"
+file = "repo.log"
 "#,
         );
 
@@ -411,6 +435,8 @@ name = "ember"
         assert!(connections.contains_key("global_only"));
         assert!(connections.contains_key("repo_only"));
         assert_eq!(config.theme.name.as_deref(), Some("ember"));
+        assert_eq!(config.logging.level.as_deref(), Some("debug"));
+        assert_eq!(config.logging.file.as_deref(), Some("repo.log"));
 
         let _ = fs::remove_dir_all(&root);
         Ok(())

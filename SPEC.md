@@ -101,12 +101,22 @@ default_database = "lazycompass"
 
 [theme]
 name = "classic"
+
+[logging]
+level = "info"
+file = "lazycompass.log"
 ```
 
 Theme notes:
 
 - `theme.name` is optional; defaults to `classic`.
 - Available built-in themes: `classic`, `ember`.
+
+Logging notes:
+
+- `logging.level` defaults to `info`.
+- `logging.file` defaults to `~/.config/lazycompass/lazycompass.log`.
+- Relative `logging.file` paths are resolved against the global config directory.
 
 ### 8.4 Query and Aggregation Files (TOML)
 
