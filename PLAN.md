@@ -88,7 +88,7 @@ Deliverables:
 
 ### 7.4 Observability and Operations
 
-Status: planned
+Status: in progress
 
 Scope:
 - Structured logs with consistent fields
@@ -96,11 +96,11 @@ Scope:
 - Consistent exit codes
 
 Tasks:
-- Add structured logging fields
+- [x] Add structured logging fields
   - command, component, connection name (redacted), database, collection
-- Implement log file rotation or max-size cap
+- [ ] Implement log file rotation or max-size cap
   - Define retention policy in config
-- Define exit codes for CLI
+- [ ] Define exit codes for CLI
   - Success, user error, config error, network error
 
 Deliverables:

@@ -108,7 +108,7 @@ fn run() -> Result<()> {
                 config.read_only()
             };
             init_logging(&paths, &config)?;
-            tracing::info!(command = "tui", "lazycompass started");
+            tracing::info!(component = "tui", command = "tui", "lazycompass started");
             lazycompass_tui::run(read_only)?;
         }
     }
@@ -267,10 +267,19 @@ fn run_query(args: QueryArgs) -> Result<()> {
     let request = build_query_request(args)?;
     let storage = load_storage(&paths)?;
     init_logging(&paths, &storage.config)?;
-    tracing::info!(command = "query", "lazycompass started");
+    tracing::info!(component = "cli", command = "query", "lazycompass started");
     report_warnings(&storage);
     let spec = resolve_query_spec(&request, &storage)?;
     let executor = MongoExecutor::new();
+    let connection = executor.resolve_connection(&storage.config, spec.connection.as_deref())?;
+    tracing::info!(
+        component = "cli",
+        command = "query",
+        connection = connection.name.as_str(),
+        database = spec.database.as_str(),
+        collection = spec.collection.as_str(),
+        "executing query"
+    );
     let runtime = tokio::runtime::Runtime::new().context("unable to start async runtime")?;
     let documents = runtime.block_on(executor.execute_query(&storage.config, &spec))?;
     print_documents(request.output, &documents)
@@ -282,10 +291,19 @@ fn run_agg(args: AggArgs) -> Result<()> {
     let request = build_agg_request(args)?;
     let storage = load_storage(&paths)?;
     init_logging(&paths, &storage.config)?;
-    tracing::info!(command = "agg", "lazycompass started");
+    tracing::info!(component = "cli", command = "agg", "lazycompass started");
     report_warnings(&storage);
     let spec = resolve_aggregation_spec(&request, &storage)?;
     let executor = MongoExecutor::new();
+    let connection = executor.resolve_connection(&storage.config, spec.connection.as_deref())?;
+    tracing::info!(
+        component = "cli",
+        command = "agg",
+        connection = connection.name.as_str(),
+        database = spec.database.as_str(),
+        collection = spec.collection.as_str(),
+        "executing aggregation"
+    );
     let runtime = tokio::runtime::Runtime::new().context("unable to start async runtime")?;
     let documents = runtime.block_on(executor.execute_aggregation(&storage.config, &spec))?;
     print_documents(request.output, &documents)
