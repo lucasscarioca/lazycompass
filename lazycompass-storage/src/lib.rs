@@ -197,11 +197,69 @@ fn read_config(path: &Path) -> Result<Config> {
 
     let contents = fs::read_to_string(path)
         .with_context(|| format!("unable to read config file {}", path.display()))?;
-    let config: Config = toml::from_str(&contents)
+    let mut config: Config = toml::from_str(&contents)
         .with_context(|| format!("invalid TOML in config file {}", path.display()))?;
+    resolve_env_vars(&mut config, path)?;
     validate_config(&config)
         .with_context(|| format!("invalid config data in {}", path.display()))?;
     Ok(config)
+}
+
+fn resolve_env_vars(config: &mut Config, path: &Path) -> Result<()> {
+    for (index, connection) in config.connections.iter_mut().enumerate() {
+        if connection.uri.contains("${") {
+            let label = if connection.name.trim().is_empty() {
+                format!("connection at index {index}")
+            } else {
+                format!("connection '{}'", connection.name)
+            };
+            let resolved = interpolate_env_value(&connection.uri).map_err(|error| {
+                anyhow::anyhow!(
+                    "config {}: unable to resolve env vars in {label} uri: {error}",
+                    path.display()
+                )
+            })?;
+            connection.uri = resolved;
+        }
+    }
+
+    if let Some(file) = config.logging.file.as_deref()
+        && file.contains("${")
+    {
+        let resolved = interpolate_env_value(file).map_err(|error| {
+            anyhow::anyhow!(
+                "config {}: unable to resolve env vars in logging.file: {error}",
+                path.display()
+            )
+        })?;
+        config.logging.file = Some(resolved);
+    }
+
+    Ok(())
+}
+
+fn interpolate_env_value(value: &str) -> Result<String> {
+    let mut output = String::with_capacity(value.len());
+    let mut remainder = value;
+
+    while let Some(start) = remainder.find("${") {
+        output.push_str(&remainder[..start]);
+        let rest = &remainder[start + 2..];
+        let end = rest
+            .find('}')
+            .ok_or_else(|| anyhow::anyhow!("unterminated env var placeholder"))?;
+        let name = &rest[..end];
+        if name.trim().is_empty() {
+            anyhow::bail!("empty env var placeholder");
+        }
+        let value = std::env::var(name)
+            .map_err(|_| anyhow::anyhow!("missing environment variable '{name}'"))?;
+        output.push_str(&value);
+        remainder = &rest[end + 1..];
+    }
+
+    output.push_str(remainder);
+    Ok(output)
 }
 
 fn validate_config(config: &Config) -> Result<()> {
@@ -366,6 +424,14 @@ mod tests {
         fs::write(path, contents).unwrap();
     }
 
+    fn unique_env_suffix() -> String {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+            .to_string()
+    }
+
     #[test]
     fn load_config_merges_repo_overrides() -> Result<()> {
         let root = temp_root("config_merge");
@@ -437,6 +503,78 @@ file = "repo.log"
         assert_eq!(config.theme.name.as_deref(), Some("ember"));
         assert_eq!(config.logging.level.as_deref(), Some("debug"));
         assert_eq!(config.logging.file.as_deref(), Some("repo.log"));
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn load_config_interpolates_env_vars() -> Result<()> {
+        let root = temp_root("config_env");
+        let global_root = root.join("global");
+        let suffix = unique_env_suffix();
+        let uri_var = format!("LAZYCOMPASS_TEST_URI_{suffix}");
+        let log_var = format!("LAZYCOMPASS_TEST_LOG_{suffix}");
+
+        unsafe {
+            std::env::set_var(&uri_var, "mongodb://localhost:27017");
+            std::env::set_var(&log_var, "logs");
+        }
+
+        write_file(
+            &global_root.join("config.toml"),
+            &format!(
+                r#"[[connections]]
+name = "local"
+uri = "${{{uri_var}}}"
+
+[logging]
+file = "${{{log_var}}}/lazycompass.log"
+"#
+            ),
+        );
+
+        let paths = ConfigPaths {
+            global_root,
+            repo_root: None,
+        };
+        let config = load_config(&paths)?;
+
+        assert_eq!(config.connections[0].uri, "mongodb://localhost:27017");
+        assert_eq!(config.logging.file.as_deref(), Some("logs/lazycompass.log"));
+
+        unsafe {
+            std::env::remove_var(&uri_var);
+            std::env::remove_var(&log_var);
+        }
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn load_config_rejects_missing_env_var() -> Result<()> {
+        let root = temp_root("config_env_missing");
+        let global_root = root.join("global");
+        let suffix = unique_env_suffix();
+        let missing_var = format!("LAZYCOMPASS_TEST_MISSING_{suffix}");
+
+        write_file(
+            &global_root.join("config.toml"),
+            &format!(
+                r#"[[connections]]
+name = "local"
+uri = "${{{missing_var}}}"
+"#
+            ),
+        );
+
+        let paths = ConfigPaths {
+            global_root,
+            repo_root: None,
+        };
+        let err = load_config(&paths).expect_err("expected config load to fail");
+
+        assert!(err.to_string().contains("missing environment variable"));
 
         let _ = fs::remove_dir_all(&root);
         Ok(())
