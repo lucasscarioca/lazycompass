@@ -16,10 +16,10 @@ use lazycompass_storage::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use std::collections::VecDeque;
 use std::fs;
 use std::io::{Stdout, stdout};
@@ -29,6 +29,266 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 
 const PAGE_SIZE: u64 = 20;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyAction {
+    Quit,
+    MoveDown,
+    MoveUp,
+    Back,
+    Forward,
+    GoTop,
+    GoBottom,
+    NextPage,
+    PreviousPage,
+    Insert,
+    Edit,
+    Delete,
+    SaveQuery,
+    SaveAggregation,
+    ToggleHelp,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct KeyBinding {
+    action: KeyAction,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HintGroup {
+    actions: &'static [KeyAction],
+    label: &'static str,
+}
+
+const KEY_BINDINGS: &[KeyBinding] = &[
+    KeyBinding {
+        action: KeyAction::Quit,
+        code: KeyCode::Char('q'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::MoveDown,
+        code: KeyCode::Char('j'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::MoveUp,
+        code: KeyCode::Char('k'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::Back,
+        code: KeyCode::Char('h'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::Forward,
+        code: KeyCode::Char('l'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::Forward,
+        code: KeyCode::Enter,
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::GoBottom,
+        code: KeyCode::Char('G'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::GoBottom,
+        code: KeyCode::Char('G'),
+        modifiers: KeyModifiers::SHIFT,
+    },
+    KeyBinding {
+        action: KeyAction::NextPage,
+        code: KeyCode::PageDown,
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::PreviousPage,
+        code: KeyCode::PageUp,
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::Insert,
+        code: KeyCode::Char('i'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::Edit,
+        code: KeyCode::Char('e'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::Delete,
+        code: KeyCode::Char('d'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::SaveQuery,
+        code: KeyCode::Char('Q'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::SaveQuery,
+        code: KeyCode::Char('Q'),
+        modifiers: KeyModifiers::SHIFT,
+    },
+    KeyBinding {
+        action: KeyAction::SaveAggregation,
+        code: KeyCode::Char('A'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::SaveAggregation,
+        code: KeyCode::Char('A'),
+        modifiers: KeyModifiers::SHIFT,
+    },
+    KeyBinding {
+        action: KeyAction::ToggleHelp,
+        code: KeyCode::Char('?'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::ToggleHelp,
+        code: KeyCode::Char('?'),
+        modifiers: KeyModifiers::SHIFT,
+    },
+];
+
+const HINT_MOVE: &[KeyAction] = &[KeyAction::MoveDown, KeyAction::MoveUp];
+const HINT_SCROLL: &[KeyAction] = &[KeyAction::MoveDown, KeyAction::MoveUp];
+const HINT_FORWARD: &[KeyAction] = &[KeyAction::Forward];
+const HINT_BACK: &[KeyAction] = &[KeyAction::Back];
+const HINT_TOP_BOTTOM: &[KeyAction] = &[KeyAction::GoTop, KeyAction::GoBottom];
+const HINT_PAGE: &[KeyAction] = &[KeyAction::PreviousPage, KeyAction::NextPage];
+const HINT_EDITING: &[KeyAction] = &[KeyAction::Insert, KeyAction::Edit, KeyAction::Delete];
+const HINT_EDIT_DELETE: &[KeyAction] = &[KeyAction::Edit, KeyAction::Delete];
+const HINT_SAVE: &[KeyAction] = &[KeyAction::SaveQuery, KeyAction::SaveAggregation];
+const HINT_HELP: &[KeyAction] = &[KeyAction::ToggleHelp];
+const HINT_QUIT: &[KeyAction] = &[KeyAction::Quit];
+
+const CONNECTION_HINTS: &[HintGroup] = &[
+    HintGroup {
+        actions: HINT_MOVE,
+        label: "move",
+    },
+    HintGroup {
+        actions: HINT_FORWARD,
+        label: "enter",
+    },
+    HintGroup {
+        actions: HINT_TOP_BOTTOM,
+        label: "top/bottom",
+    },
+    HintGroup {
+        actions: HINT_HELP,
+        label: "help",
+    },
+    HintGroup {
+        actions: HINT_QUIT,
+        label: "quit",
+    },
+];
+
+const DATABASE_HINTS: &[HintGroup] = &[
+    HintGroup {
+        actions: HINT_MOVE,
+        label: "move",
+    },
+    HintGroup {
+        actions: HINT_FORWARD,
+        label: "enter",
+    },
+    HintGroup {
+        actions: HINT_BACK,
+        label: "back",
+    },
+    HintGroup {
+        actions: HINT_TOP_BOTTOM,
+        label: "top/bottom",
+    },
+    HintGroup {
+        actions: HINT_HELP,
+        label: "help",
+    },
+    HintGroup {
+        actions: HINT_QUIT,
+        label: "quit",
+    },
+];
+
+const COLLECTION_HINTS: &[HintGroup] = DATABASE_HINTS;
+
+const DOCUMENT_HINTS: &[HintGroup] = &[
+    HintGroup {
+        actions: HINT_MOVE,
+        label: "move",
+    },
+    HintGroup {
+        actions: HINT_FORWARD,
+        label: "view",
+    },
+    HintGroup {
+        actions: HINT_BACK,
+        label: "back",
+    },
+    HintGroup {
+        actions: HINT_EDITING,
+        label: "insert/edit/delete",
+    },
+    HintGroup {
+        actions: HINT_SAVE,
+        label: "save query/agg",
+    },
+    HintGroup {
+        actions: HINT_PAGE,
+        label: "page",
+    },
+    HintGroup {
+        actions: HINT_TOP_BOTTOM,
+        label: "top/bottom",
+    },
+    HintGroup {
+        actions: HINT_HELP,
+        label: "help",
+    },
+    HintGroup {
+        actions: HINT_QUIT,
+        label: "quit",
+    },
+];
+
+const DOCUMENT_VIEW_HINTS: &[HintGroup] = &[
+    HintGroup {
+        actions: HINT_SCROLL,
+        label: "scroll",
+    },
+    HintGroup {
+        actions: HINT_BACK,
+        label: "back",
+    },
+    HintGroup {
+        actions: HINT_EDIT_DELETE,
+        label: "edit/delete",
+    },
+    HintGroup {
+        actions: HINT_TOP_BOTTOM,
+        label: "top/bottom",
+    },
+    HintGroup {
+        actions: HINT_HELP,
+        label: "help",
+    },
+    HintGroup {
+        actions: HINT_QUIT,
+        label: "quit",
+    },
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
@@ -76,6 +336,7 @@ struct App {
     document_lines: Vec<String>,
     document_scroll: u16,
     last_g: bool,
+    help_visible: bool,
     message: Option<String>,
     confirm: Option<ConfirmState>,
     warnings: VecDeque<String>,
@@ -113,6 +374,7 @@ impl App {
             document_lines: Vec::new(),
             document_scroll: 0,
             last_g: false,
+            help_visible: false,
             message,
             confirm: None,
             warnings,
@@ -147,39 +409,67 @@ impl App {
             self.warnings.pop_front();
         }
 
-        if key.code == KeyCode::Char('q') {
-            return Ok(true);
-        }
-
-        match key.code {
-            KeyCode::Char('g') if key.modifiers == KeyModifiers::NONE => {
-                if self.last_g {
-                    self.last_g = false;
-                    self.go_top();
-                } else {
-                    self.last_g = true;
-                }
+        if self.help_visible {
+            if key.code == KeyCode::Esc {
+                self.help_visible = false;
+                self.last_g = false;
                 return Ok(false);
             }
-            _ => {
-                self.last_g = false;
+            if let Some(action) = action_for_key(key) {
+                match action {
+                    KeyAction::ToggleHelp => {
+                        self.help_visible = false;
+                    }
+                    KeyAction::Quit => return Ok(true),
+                    _ => {}
+                }
             }
+            self.last_g = false;
+            return Ok(false);
         }
 
-        match key.code {
-            KeyCode::Char('G') => self.go_bottom(),
-            KeyCode::Char('j') => self.move_down(),
-            KeyCode::Char('k') => self.move_up(),
-            KeyCode::Char('h') => self.go_back(),
-            KeyCode::Char('l') | KeyCode::Enter => self.go_forward()?,
-            KeyCode::PageDown => self.next_page()?,
-            KeyCode::PageUp => self.previous_page()?,
-            KeyCode::Char('i') => self.insert_document(terminal)?,
-            KeyCode::Char('e') => self.edit_document(terminal)?,
-            KeyCode::Char('d') => self.request_delete_document()?,
-            KeyCode::Char('Q') => self.save_query(terminal)?,
-            KeyCode::Char('A') => self.save_aggregation(terminal)?,
-            _ => {}
+        if let Some(action) = self.resolve_action(key) {
+            return self.apply_action(action, terminal);
+        }
+
+        Ok(false)
+    }
+
+    fn resolve_action(&mut self, key: KeyEvent) -> Option<KeyAction> {
+        if key.code == KeyCode::Char('g') && key.modifiers == KeyModifiers::NONE {
+            if self.last_g {
+                self.last_g = false;
+                return Some(KeyAction::GoTop);
+            }
+            self.last_g = true;
+            return None;
+        }
+
+        self.last_g = false;
+        action_for_key(key)
+    }
+
+    fn apply_action(
+        &mut self,
+        action: KeyAction,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<bool> {
+        match action {
+            KeyAction::Quit => return Ok(true),
+            KeyAction::MoveDown => self.move_down(),
+            KeyAction::MoveUp => self.move_up(),
+            KeyAction::Back => self.go_back(),
+            KeyAction::Forward => self.go_forward()?,
+            KeyAction::GoTop => self.go_top(),
+            KeyAction::GoBottom => self.go_bottom(),
+            KeyAction::NextPage => self.next_page()?,
+            KeyAction::PreviousPage => self.previous_page()?,
+            KeyAction::Insert => self.insert_document(terminal)?,
+            KeyAction::Edit => self.edit_document(terminal)?,
+            KeyAction::Delete => self.request_delete_document()?,
+            KeyAction::SaveQuery => self.save_query(terminal)?,
+            KeyAction::SaveAggregation => self.save_aggregation(terminal)?,
+            KeyAction::ToggleHelp => self.help_visible = !self.help_visible,
         }
 
         Ok(false)
@@ -921,6 +1211,10 @@ impl App {
             }
         }
 
+        if self.help_visible {
+            self.render_help(frame, layout[1]);
+        }
+
         let footer =
             Paragraph::new(self.footer_lines()).block(Block::default().borders(Borders::TOP));
         frame.render_widget(footer, layout[2]);
@@ -959,6 +1253,34 @@ impl App {
         frame.render_stateful_widget(list, area, &mut state);
     }
 
+    fn render_help(&self, frame: &mut ratatui::Frame, area: Rect) {
+        let help_area = centered_rect(70, 70, area);
+        frame.render_widget(Clear, help_area);
+        let help = Paragraph::new(self.help_lines())
+            .block(Block::default().borders(Borders::ALL).title("Help"))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(help, help_area);
+    }
+
+    fn help_lines(&self) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+        for group in hint_groups(self.screen) {
+            let keys = keys_for_actions(group.actions);
+            lines.push(Line::from(format!("{keys:<12} {}", group.label)));
+        }
+        lines.push(Line::from(" "));
+        lines.push(Line::from("press ? or Esc to close"));
+        lines
+    }
+
+    fn hint_line(&self) -> String {
+        hint_groups(self.screen)
+            .iter()
+            .map(|group| format!("{} {}", keys_for_actions(group.actions), group.label))
+            .collect::<Vec<_>>()
+            .join("  ")
+    }
+
     fn header_lines(&self) -> Vec<Line<'static>> {
         let title = match self.screen {
             Screen::Connections => "Connections",
@@ -985,15 +1307,7 @@ impl App {
     }
 
     fn footer_lines(&self) -> Vec<Line<'static>> {
-        let hint = match self.screen {
-            Screen::Connections => "j/k move  l enter  gg/G top/bottom  q quit",
-            Screen::Databases => "j/k move  l enter  h back  gg/G top/bottom  q quit",
-            Screen::Collections => "j/k move  l enter  h back  gg/G top/bottom  q quit",
-            Screen::Documents => {
-                "j/k move  l view  h back  i insert  e edit  d delete  Q save query  A save agg  pgup/pgdn page  gg/G top/bottom  q quit"
-            }
-            Screen::DocumentView => "j/k scroll  h back  e edit  d delete  gg/G top/bottom  q quit",
-        };
+        let hint = self.hint_line();
 
         if let Some(confirm) = &self.confirm {
             vec![
@@ -1009,7 +1323,7 @@ impl App {
                     message.clone(),
                     Style::default().fg(Color::Red),
                 )),
-                Line::from(hint.to_string()),
+                Line::from(hint),
             ]
         } else if let Some(warning) = &self.warnings.front() {
             vec![
@@ -1017,12 +1331,85 @@ impl App {
                     format!("warning: {warning}"),
                     Style::default().fg(Color::Yellow),
                 )),
-                Line::from(hint.to_string()),
+                Line::from(hint),
             ]
         } else {
-            vec![Line::from(hint.to_string()), Line::from(" ")]
+            vec![Line::from(hint), Line::from(" ")]
         }
     }
+}
+
+impl KeyBinding {
+    fn matches(&self, key: KeyEvent) -> bool {
+        self.code == key.code && self.modifiers == key.modifiers
+    }
+}
+
+fn action_for_key(key: KeyEvent) -> Option<KeyAction> {
+    KEY_BINDINGS
+        .iter()
+        .find(|binding| binding.matches(key))
+        .map(|binding| binding.action)
+}
+
+fn hint_groups(screen: Screen) -> &'static [HintGroup] {
+    match screen {
+        Screen::Connections => CONNECTION_HINTS,
+        Screen::Databases => DATABASE_HINTS,
+        Screen::Collections => COLLECTION_HINTS,
+        Screen::Documents => DOCUMENT_HINTS,
+        Screen::DocumentView => DOCUMENT_VIEW_HINTS,
+    }
+}
+
+fn action_keys(action: KeyAction) -> &'static [&'static str] {
+    match action {
+        KeyAction::Quit => &["q"],
+        KeyAction::MoveDown => &["j"],
+        KeyAction::MoveUp => &["k"],
+        KeyAction::Back => &["h"],
+        KeyAction::Forward => &["l", "Enter"],
+        KeyAction::GoTop => &["gg"],
+        KeyAction::GoBottom => &["G"],
+        KeyAction::NextPage => &["PgDn"],
+        KeyAction::PreviousPage => &["PgUp"],
+        KeyAction::Insert => &["i"],
+        KeyAction::Edit => &["e"],
+        KeyAction::Delete => &["d"],
+        KeyAction::SaveQuery => &["Q"],
+        KeyAction::SaveAggregation => &["A"],
+        KeyAction::ToggleHelp => &["?"],
+    }
+}
+
+fn keys_for_actions(actions: &[KeyAction]) -> String {
+    let mut keys = Vec::new();
+    for action in actions {
+        keys.extend_from_slice(action_keys(*action));
+    }
+    keys.join("/")
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+
+    let vertical = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1]);
+
+    vertical[1]
 }
 
 pub fn run() -> Result<()> {

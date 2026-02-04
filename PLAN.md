@@ -1,91 +1,72 @@
-# LazyCompass MVP Plan
+# LazyCompass Phase 6 Plan
 
-This plan captures the next four phases for delivering a working MVP, aligned with `SPEC.md`.
+This plan replaces the MVP phases and focuses on Phase 6 (Polish) from `SPEC.md`.
+Phases A-D are complete as of 2026-02-04.
 
-## Phase A — Config + Persistence (Unblocks CLI + TUI)
+## Phase 6 — Polish
 
-Goal: Make saved queries/aggregations and connection config loadable and reliable.
+Goal: Improve TUI UX and operability while keeping scope small and consistent.
 
-Status: complete (2026-02-04)
+Status: in progress (2026-02-04)
 
-Scope:
-- Implement loaders in `lazycompass-storage`:
-  - Global config: `~/.config/lazycompass/config.toml`
-  - Repo config: `.lazycompass/config.toml`
-  - Repo overrides global using merge-by-name (repo wins on collisions)
-- Load saved queries/aggregations from:
-  - `.lazycompass/queries/*.toml`
-  - `.lazycompass/aggregations/*.toml`
-- Validate required fields with clear, actionable errors.
-- Add helper validation functions in `lazycompass-core` for `SavedQuery` and `SavedAggregation`.
-- Ensure errors include path context for easier debugging.
-
-Deliverables:
-- Storage API for resolving config + saved specs.
-- Tests for config merge and file parsing (if feasible now).
-
-## Phase B — Mongo Execution (CLI works against playground)
-
-Goal: Make `lazycompass query/agg` actually execute against MongoDB.
-
-Status: complete (2026-02-04)
+### 6.1 Keymap Refinement
 
 Scope:
-- Implement connection resolution by name in `lazycompass-mongo`.
-- Query execution:
-  - Parse filter/projection/sort JSON strings.
-  - Run `find` with limit.
-- Aggregation execution:
-  - Parse pipeline JSON string and run `aggregate`.
-- Wire CLI commands to:
-  - Load saved specs from storage
-  - Execute inline specs
-  - Output pretty JSON (default)
-  - Output basic table for top-level scalar fields (`--table`)
+- Audit current key bindings for collisions and gaps.
+- Normalize navigation keys across views (lists, document view, editor).
+- Add consistent help overlay or inline hints for active view.
+- Ensure command palette and editor keys do not shadow navigation.
+- Update any keymap docs or in-app help to match behavior.
 
 Deliverables:
-- CLI end-to-end against the playground.
-- Minimal table formatter for MVP.
+- One source-of-truth keymap definition.
+- Consistent key behavior across all TUI screens.
+- Visible key hints for users.
 
-## Phase C — TUI MVP (Read-only)
-
-Goal: Provide a working, read-only TUI flow.
-
-Status: complete (2026-02-04)
+### 6.2 Configurable Themes
 
 Scope:
-- TUI application shell using ratatui + crossterm.
-- State machine:
-  - Connection selection
-  - Database list
-  - Collection list
-  - Document list with pagination
-  - Document view
-- Vim-like navigation keys (j/k/h/l, gg/G, q).
-- Read-only data access via shared storage + mongo layers.
+- Define a minimal theme model (colors, highlights, borders, selection).
+- Add theme config loading in storage (global + repo override).
+- Wire theme into TUI rendering (ratatui styles).
+- Provide at least one default and one alternative theme.
+- Document theme config format in `SPEC.md`.
 
 Deliverables:
-- Basic navigation and document viewing.
-- No mutations yet (edit/insert/delete later in Phase D).
+- Theme config support with repo overrides.
+- TUI uses theme values for all styling.
+- Example theme files.
 
-## Phase D — Write Actions (Post-MVP)
-
-Goal: Enable edits, inserts, and deletion with safe UX.
-
-Status: complete (2026-02-04)
+### 6.3 Local Logging and Telemetry
 
 Scope:
-- Document insert/edit/delete.
-- Optional $EDITOR integration for editing JSON.
-- Save queries/aggregations from TUI.
-- Improve keymap and command palette interactions.
+- Add local log file path resolution in storage.
+- Introduce structured tracing with sensible defaults.
+- Allow config to set log level and file location.
+- Ensure logs do not include credentials or secrets.
+- Add minimal documentation and examples.
 
 Deliverables:
-- Full CRUD in TUI.
-- Persistence of saved specs from UI.
+- Working local logging with configurable level.
+- Safe-by-default redaction rules.
 
-## Decisions Locked In
+### 6.4 Testing and Quality
 
-- Table output is basic (top-level scalar fields only) for MVP.
-- Config merge uses merge-by-name; repo overrides global.
-- TUI MVP is read-only; write actions in Phase D.
+Scope:
+- Unit tests for theme parsing and keymap validation.
+- Integration tests for config resolution with theme + logging.
+- CLI parsing tests for any new flags.
+- Update or add fixtures as needed.
+
+Deliverables:
+- Passing tests for new config + TUI changes.
+- Coverage for keymap and theme parsing.
+
+## Tracking Checklist
+
+- Keymap audit + consolidation complete.
+- Theme model + config loading done.
+- TUI renders entirely via theme values.
+- Logging config implemented + redaction verified.
+- Tests added and passing.
+- `SPEC.md` updated where new config formats are documented.
