@@ -5,16 +5,26 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use lazycompass_core::ConnectionSpec;
-use lazycompass_mongo::{Document, DocumentListSpec, MongoExecutor};
-use lazycompass_storage::{ConfigPaths, StorageSnapshot, load_storage};
+use lazycompass_core::{ConnectionSpec, SavedAggregation, SavedQuery};
+use lazycompass_mongo::{
+    Bson, Document, DocumentDeleteSpec, DocumentInsertSpec, DocumentListSpec, DocumentReplaceSpec,
+    MongoExecutor, parse_json_document,
+};
+use lazycompass_storage::{
+    ConfigPaths, StorageSnapshot, load_storage, saved_aggregation_path, saved_query_path,
+    write_saved_aggregation, write_saved_query,
+};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
+use std::fs;
 use std::io::{Stdout, stdout};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 
 const PAGE_SIZE: u64 = 20;
@@ -28,7 +38,28 @@ enum Screen {
     DocumentView,
 }
 
+#[derive(Debug, Clone)]
+struct ConfirmState {
+    prompt: String,
+    action: ConfirmAction,
+}
+
+#[derive(Debug, Clone)]
+enum ConfirmAction {
+    DeleteDocument {
+        spec: DocumentDeleteSpec,
+        return_to_documents: bool,
+    },
+    OverwriteQuery {
+        query: SavedQuery,
+    },
+    OverwriteAggregation {
+        aggregation: SavedAggregation,
+    },
+}
+
 struct App {
+    paths: ConfigPaths,
     storage: StorageSnapshot,
     executor: MongoExecutor,
     runtime: Runtime,
@@ -45,10 +76,11 @@ struct App {
     document_scroll: u16,
     last_g: bool,
     message: Option<String>,
+    confirm: Option<ConfirmState>,
 }
 
 impl App {
-    fn new(storage: StorageSnapshot) -> Result<Self> {
+    fn new(paths: ConfigPaths, storage: StorageSnapshot) -> Result<Self> {
         let runtime = Runtime::new().context("unable to start async runtime")?;
         let connection_index = if storage.config.connections.is_empty() {
             None
@@ -62,6 +94,7 @@ impl App {
         };
 
         Ok(Self {
+            paths,
             storage,
             executor: MongoExecutor::new(),
             runtime,
@@ -78,6 +111,7 @@ impl App {
             document_scroll: 0,
             last_g: false,
             message,
+            confirm: None,
         })
     }
 
@@ -86,7 +120,7 @@ impl App {
             terminal.draw(|frame| self.draw(frame))?;
             match event::read()? {
                 Event::Key(key) => {
-                    if self.handle_key(key)? {
+                    if self.handle_key(key, terminal)? {
                         return Ok(());
                     }
                 }
@@ -96,7 +130,15 @@ impl App {
         }
     }
 
-    fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
+    fn handle_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<bool> {
+        if self.confirm.is_some() {
+            return self.handle_confirm_key(key, terminal);
+        }
+
         if key.code == KeyCode::Char('q') {
             return Ok(true);
         }
@@ -124,10 +166,366 @@ impl App {
             KeyCode::Char('l') | KeyCode::Enter => self.go_forward()?,
             KeyCode::PageDown => self.next_page()?,
             KeyCode::PageUp => self.previous_page()?,
+            KeyCode::Char('i') => self.insert_document(terminal)?,
+            KeyCode::Char('e') => self.edit_document(terminal)?,
+            KeyCode::Char('d') => self.request_delete_document()?,
+            KeyCode::Char('Q') => self.save_query(terminal)?,
+            KeyCode::Char('A') => self.save_aggregation(terminal)?,
             _ => {}
         }
 
         Ok(false)
+    }
+
+    fn handle_confirm_key(
+        &mut self,
+        key: KeyEvent,
+        _terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<bool> {
+        let Some(confirm) = self.confirm.take() else {
+            return Ok(false);
+        };
+
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                if let Err(error) = self.perform_confirm_action(confirm.action) {
+                    self.message = Some(error.to_string());
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Char('q') | KeyCode::Esc => {
+                self.message = Some("cancelled".to_string());
+            }
+            _ => {
+                self.confirm = Some(confirm);
+            }
+        }
+
+        self.last_g = false;
+        Ok(false)
+    }
+
+    fn perform_confirm_action(&mut self, action: ConfirmAction) -> Result<()> {
+        match action {
+            ConfirmAction::DeleteDocument {
+                spec,
+                return_to_documents,
+            } => {
+                self.runtime
+                    .block_on(self.executor.delete_document(&self.storage.config, &spec))?;
+                if return_to_documents {
+                    self.screen = Screen::Documents;
+                }
+                self.reload_documents_after_change()?;
+                self.message = Some("document deleted".to_string());
+            }
+            ConfirmAction::OverwriteQuery { query } => {
+                let path = write_saved_query(&self.paths, &query, true)?;
+                self.upsert_query(query);
+                self.message = Some(format!("saved query to {}", path.display()));
+            }
+            ConfirmAction::OverwriteAggregation { aggregation } => {
+                let path = write_saved_aggregation(&self.paths, &aggregation, true)?;
+                self.upsert_aggregation(aggregation);
+                self.message = Some(format!("saved aggregation to {}", path.display()));
+            }
+        }
+        Ok(())
+    }
+
+    fn request_delete_document(&mut self) -> Result<()> {
+        if !matches!(self.screen, Screen::Documents | Screen::DocumentView) {
+            return Ok(());
+        }
+        let result = (|| -> Result<()> {
+            let (connection, database, collection) = self.selected_context()?;
+            let document = self.selected_document()?;
+            let id = document_id(document)?;
+            let prompt = format!("delete document {}? (y/n)", format_bson(&id));
+            let spec = DocumentDeleteSpec {
+                connection: Some(connection),
+                database,
+                collection,
+                id,
+            };
+            self.confirm = Some(ConfirmState {
+                prompt,
+                action: ConfirmAction::DeleteDocument {
+                    spec,
+                    return_to_documents: self.screen == Screen::DocumentView,
+                },
+            });
+            Ok(())
+        })();
+
+        if let Err(error) = result {
+            self.message = Some(error.to_string());
+        }
+        Ok(())
+    }
+
+    fn insert_document(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+        if self.screen != Screen::Documents {
+            return Ok(());
+        }
+        let result = (|| -> Result<()> {
+            let (connection, database, collection) = self.selected_context()?;
+            let contents = self.open_editor(terminal, "insert", "{}")?;
+            let document = parse_json_document("document", &contents)?;
+            let spec = DocumentInsertSpec {
+                connection: Some(connection),
+                database,
+                collection,
+                document,
+            };
+            let inserted_id = self
+                .runtime
+                .block_on(self.executor.insert_document(&self.storage.config, &spec))?;
+            self.reload_documents_after_change()?;
+            self.message = Some(format!("inserted document {}", format_bson(&inserted_id)));
+            Ok(())
+        })();
+
+        if let Err(error) = result {
+            self.message = Some(error.to_string());
+        }
+        Ok(())
+    }
+
+    fn edit_document(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+        if !matches!(self.screen, Screen::Documents | Screen::DocumentView) {
+            return Ok(());
+        }
+        let result = (|| -> Result<()> {
+            let (connection, database, collection) = self.selected_context()?;
+            let document = self.selected_document()?.clone();
+            let original_id = document_id(&document)?;
+            let initial =
+                serde_json::to_string_pretty(&document).context("unable to serialize document")?;
+            let contents = self.open_editor(terminal, "edit", &initial)?;
+            let mut updated = parse_json_document("document", &contents)?;
+            let mut id_changed = false;
+            match updated.get("_id") {
+                Some(value) if value == &original_id => {}
+                _ => {
+                    updated.insert("_id", original_id.clone());
+                    id_changed = true;
+                }
+            }
+            let spec = DocumentReplaceSpec {
+                connection: Some(connection),
+                database,
+                collection,
+                id: original_id,
+                document: updated,
+            };
+            self.runtime
+                .block_on(self.executor.replace_document(&self.storage.config, &spec))?;
+            self.reload_documents_after_change()?;
+            self.message = Some(if id_changed {
+                "updated document (kept original _id)".to_string()
+            } else {
+                "updated document".to_string()
+            });
+            Ok(())
+        })();
+
+        if let Err(error) = result {
+            self.message = Some(error.to_string());
+        }
+        Ok(())
+    }
+
+    fn save_query(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+        if self.screen != Screen::Documents {
+            return Ok(());
+        }
+        let result = (|| -> Result<()> {
+            let (connection, database, collection) = self.selected_context()?;
+            let template = SavedQuery {
+                name: "new_query".to_string(),
+                connection: Some(connection),
+                database,
+                collection,
+                filter: None,
+                projection: None,
+                sort: None,
+                limit: None,
+                notes: None,
+            };
+            let initial =
+                toml::to_string_pretty(&template).context("unable to render query template")?;
+            let contents = self.open_editor(terminal, "query", &initial)?;
+            let query: SavedQuery =
+                toml::from_str(&contents).context("invalid TOML for saved query")?;
+            query.validate().context("invalid saved query")?;
+            let path = saved_query_path(&self.paths, &query.name)?;
+            if path.exists() {
+                self.confirm = Some(ConfirmState {
+                    prompt: format!("overwrite saved query '{}'? (y/n)", query.name),
+                    action: ConfirmAction::OverwriteQuery { query },
+                });
+                return Ok(());
+            }
+            let path = write_saved_query(&self.paths, &query, false)?;
+            self.upsert_query(query);
+            self.message = Some(format!("saved query to {}", path.display()));
+            Ok(())
+        })();
+
+        if let Err(error) = result {
+            self.message = Some(error.to_string());
+        }
+        Ok(())
+    }
+
+    fn save_aggregation(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<()> {
+        if self.screen != Screen::Documents {
+            return Ok(());
+        }
+        let result = (|| -> Result<()> {
+            let (connection, database, collection) = self.selected_context()?;
+            let template = SavedAggregation {
+                name: "new_aggregation".to_string(),
+                connection: Some(connection),
+                database,
+                collection,
+                pipeline: "[]".to_string(),
+                notes: None,
+            };
+            let initial = toml::to_string_pretty(&template)
+                .context("unable to render aggregation template")?;
+            let contents = self.open_editor(terminal, "aggregation", &initial)?;
+            let aggregation: SavedAggregation =
+                toml::from_str(&contents).context("invalid TOML for saved aggregation")?;
+            aggregation
+                .validate()
+                .context("invalid saved aggregation")?;
+            let path = saved_aggregation_path(&self.paths, &aggregation.name)?;
+            if path.exists() {
+                self.confirm = Some(ConfirmState {
+                    prompt: format!("overwrite saved aggregation '{}'? (y/n)", aggregation.name),
+                    action: ConfirmAction::OverwriteAggregation { aggregation },
+                });
+                return Ok(());
+            }
+            let path = write_saved_aggregation(&self.paths, &aggregation, false)?;
+            self.upsert_aggregation(aggregation);
+            self.message = Some(format!("saved aggregation to {}", path.display()));
+            Ok(())
+        })();
+
+        if let Err(error) = result {
+            self.message = Some(error.to_string());
+        }
+        Ok(())
+    }
+
+    fn open_editor(
+        &self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+        label: &str,
+        initial: &str,
+    ) -> Result<String> {
+        let editor = resolve_editor()?;
+        let path = editor_temp_path(label);
+        fs::write(&path, initial)
+            .with_context(|| format!("unable to write temporary file {}", path.display()))?;
+
+        suspend_terminal(terminal)?;
+        let status = run_editor_command(&editor, &path);
+        let resume = resume_terminal(terminal);
+        let status = match status {
+            Ok(status) => status,
+            Err(error) => {
+                let _ = resume;
+                let _ = fs::remove_file(&path);
+                return Err(error);
+            }
+        };
+        resume?;
+        if !status.success() {
+            let _ = fs::remove_file(&path);
+            anyhow::bail!("editor exited with non-zero status");
+        }
+
+        let contents = fs::read_to_string(&path)
+            .with_context(|| format!("unable to read temporary file {}", path.display()))?;
+        let _ = fs::remove_file(&path);
+        Ok(contents)
+    }
+
+    fn reload_documents_after_change(&mut self) -> Result<()> {
+        if !matches!(self.screen, Screen::Documents | Screen::DocumentView) {
+            return Ok(());
+        }
+        let selected_index = self.document_index;
+        self.load_documents()?;
+        if self.documents.is_empty() && self.document_page > 0 {
+            self.document_page -= 1;
+            self.load_documents()?;
+        }
+        if let Some(index) = selected_index {
+            Self::select_index(&mut self.document_index, self.documents.len(), index);
+        }
+        if self.screen == Screen::DocumentView {
+            self.prepare_document_view();
+        }
+        Ok(())
+    }
+
+    fn selected_context(&self) -> Result<(String, String, String)> {
+        let connection = self
+            .selected_connection()
+            .ok_or_else(|| anyhow::anyhow!("select a connection"))?;
+        let database = self
+            .selected_database()
+            .ok_or_else(|| anyhow::anyhow!("select a database"))?;
+        let collection = self
+            .selected_collection()
+            .ok_or_else(|| anyhow::anyhow!("select a collection"))?;
+        Ok((
+            connection.name.clone(),
+            database.to_string(),
+            collection.to_string(),
+        ))
+    }
+
+    fn selected_document(&self) -> Result<&Document> {
+        let index = self
+            .document_index
+            .ok_or_else(|| anyhow::anyhow!("select a document"))?;
+        self.documents
+            .get(index)
+            .ok_or_else(|| anyhow::anyhow!("select a document"))
+    }
+
+    fn upsert_query(&mut self, query: SavedQuery) {
+        if let Some(existing) = self
+            .storage
+            .queries
+            .iter_mut()
+            .find(|saved| saved.name == query.name)
+        {
+            *existing = query;
+        } else {
+            self.storage.queries.push(query);
+        }
+    }
+
+    fn upsert_aggregation(&mut self, aggregation: SavedAggregation) {
+        if let Some(existing) = self
+            .storage
+            .aggregations
+            .iter_mut()
+            .find(|saved| saved.name == aggregation.name)
+        {
+            *existing = aggregation;
+        } else {
+            self.storage.aggregations.push(aggregation);
+        }
     }
 
     fn go_top(&mut self) {
@@ -584,12 +982,20 @@ impl App {
             Screen::Databases => "j/k move  l enter  h back  gg/G top/bottom  q quit",
             Screen::Collections => "j/k move  l enter  h back  gg/G top/bottom  q quit",
             Screen::Documents => {
-                "j/k move  l view  h back  pgup/pgdn page  gg/G top/bottom  q quit"
+                "j/k move  l view  h back  i insert  e edit  d delete  Q save query  A save agg  pgup/pgdn page  gg/G top/bottom  q quit"
             }
-            Screen::DocumentView => "j/k scroll  h back  gg/G top/bottom  q quit",
+            Screen::DocumentView => "j/k scroll  h back  e edit  d delete  gg/G top/bottom  q quit",
         };
 
-        if let Some(message) = &self.message {
+        if let Some(confirm) = &self.confirm {
+            vec![
+                Line::from(Span::styled(
+                    confirm.prompt.clone(),
+                    Style::default().fg(Color::Yellow),
+                )),
+                Line::from("y confirm  n cancel"),
+            ]
+        } else if let Some(message) = &self.message {
             vec![
                 Line::from(Span::styled(
                     message.clone(),
@@ -607,7 +1013,7 @@ pub fn run() -> Result<()> {
     let cwd = std::env::current_dir().context("unable to resolve current directory")?;
     let paths = ConfigPaths::resolve_from(&cwd)?;
     let storage = load_storage(&paths)?;
-    let mut app = App::new(storage)?;
+    let mut app = App::new(paths, storage)?;
 
     let mut terminal = setup_terminal()?;
     let result = app.run(&mut terminal);
@@ -629,6 +1035,76 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result
         .context("unable to leave alternate screen")?;
     terminal.show_cursor().context("unable to restore cursor")?;
     Ok(())
+}
+
+fn suspend_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    disable_raw_mode().context("unable to disable raw mode")?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, Show)
+        .context("unable to leave alternate screen")?;
+    terminal.show_cursor().context("unable to show cursor")?;
+    Ok(())
+}
+
+fn resume_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    enable_raw_mode().context("unable to enable raw mode")?;
+    execute!(terminal.backend_mut(), EnterAlternateScreen, Hide)
+        .context("unable to enter alternate screen")?;
+    terminal.clear().context("unable to clear terminal")?;
+    Ok(())
+}
+
+fn resolve_editor() -> Result<String> {
+    std::env::var("VISUAL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("EDITOR")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .ok_or_else(|| anyhow::anyhow!("$VISUAL or $EDITOR is required for editing"))
+}
+
+fn run_editor_command(editor: &str, path: &Path) -> Result<std::process::ExitStatus> {
+    if editor.split_whitespace().count() > 1 {
+        Command::new("sh")
+            .arg("-c")
+            .arg(format!("{editor} \"{}\"", path.display()))
+            .status()
+            .context("failed to launch editor")
+    } else {
+        Command::new(editor)
+            .arg(path)
+            .status()
+            .context("failed to launch editor")
+    }
+}
+
+fn editor_temp_path(label: &str) -> PathBuf {
+    let mut path = std::env::temp_dir();
+    let pid = std::process::id();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    path.push(format!("lazycompass_{label}_{pid}_{nanos}.tmp"));
+    path
+}
+
+fn document_id(document: &Document) -> Result<Bson> {
+    document
+        .get("_id")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("document is missing _id"))
+}
+
+fn format_bson(value: &Bson) -> String {
+    match serde_json::to_value(value) {
+        Ok(serde_json::Value::String(value)) => value,
+        Ok(serde_json::Value::Null) => "null".to_string(),
+        Ok(value) => value.to_string(),
+        Err(_) => format!("{value:?}"),
+    }
 }
 
 fn connection_label(connection: &ConnectionSpec) -> String {

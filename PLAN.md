@@ -66,11 +66,13 @@ Scope:
 
 Deliverables:
 - Basic navigation and document viewing.
-- No mutations yet (edit/insert/delete later).
+- No mutations yet (edit/insert/delete later in Phase D).
 
 ## Phase D — Write Actions (Post-MVP)
 
 Goal: Enable edits, inserts, and deletion with safe UX.
+
+Status: complete (2026-02-04)
 
 Scope:
 - Document insert/edit/delete.

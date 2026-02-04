@@ -41,3 +41,13 @@ cargo run -p lazycompass -- query active_users
 cargo run -p lazycompass -- query --db lazycompass --collection users --filter '{"active": true}'
 cargo run -p lazycompass -- agg orders_by_user --table
 ```
+
+## Try the TUI
+
+The TUI opens your `$VISUAL` or `$EDITOR` for JSON/TOML editing.
+
+```bash
+cargo run -p lazycompass
+```
+
+Keys (Documents screen): `i` insert, `e` edit, `d` delete, `Q` save query, `A` save aggregation.

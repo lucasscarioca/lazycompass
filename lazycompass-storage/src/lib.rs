@@ -98,6 +98,65 @@ pub fn load_saved_aggregations(paths: &ConfigPaths) -> Result<Vec<SavedAggregati
     load_aggregations_from_dir(&dir)
 }
 
+pub fn saved_query_path(paths: &ConfigPaths, name: &str) -> Result<PathBuf> {
+    let name = normalize_saved_name(name)?;
+    let dir = paths.repo_queries_dir().ok_or_else(|| {
+        anyhow::anyhow!("repository config not found; run inside a repo with .lazycompass")
+    })?;
+    Ok(dir.join(format!("{name}.toml")))
+}
+
+pub fn saved_aggregation_path(paths: &ConfigPaths, name: &str) -> Result<PathBuf> {
+    let name = normalize_saved_name(name)?;
+    let dir = paths.repo_aggregations_dir().ok_or_else(|| {
+        anyhow::anyhow!("repository config not found; run inside a repo with .lazycompass")
+    })?;
+    Ok(dir.join(format!("{name}.toml")))
+}
+
+pub fn write_saved_query(
+    paths: &ConfigPaths,
+    query: &SavedQuery,
+    overwrite: bool,
+) -> Result<PathBuf> {
+    query.validate().context("invalid saved query")?;
+    let path = saved_query_path(paths, &query.name)?;
+    if path.exists() && !overwrite {
+        anyhow::bail!("saved query '{}' already exists", query.name);
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("unable to create directory {}", parent.display()))?;
+    }
+    let contents = toml::to_string_pretty(query).context("unable to serialize saved query")?;
+    fs::write(&path, contents)
+        .with_context(|| format!("unable to write saved query {}", path.display()))?;
+    Ok(path)
+}
+
+pub fn write_saved_aggregation(
+    paths: &ConfigPaths,
+    aggregation: &SavedAggregation,
+    overwrite: bool,
+) -> Result<PathBuf> {
+    aggregation
+        .validate()
+        .context("invalid saved aggregation")?;
+    let path = saved_aggregation_path(paths, &aggregation.name)?;
+    if path.exists() && !overwrite {
+        anyhow::bail!("saved aggregation '{}' already exists", aggregation.name);
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("unable to create directory {}", parent.display()))?;
+    }
+    let contents =
+        toml::to_string_pretty(aggregation).context("unable to serialize saved aggregation")?;
+    fs::write(&path, contents)
+        .with_context(|| format!("unable to write saved aggregation {}", path.display()))?;
+    Ok(path)
+}
+
 fn find_repo_root(start: &Path) -> Option<PathBuf> {
     let mut current = Some(start);
 
@@ -154,6 +213,17 @@ fn merge_config(global: Config, repo: Config) -> Config {
     }
 
     Config { connections }
+}
+
+fn normalize_saved_name(name: &str) -> Result<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("name cannot be empty");
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') {
+        anyhow::bail!("name cannot contain path separators");
+    }
+    Ok(trimmed.to_string())
 }
 
 fn load_queries_from_dir(dir: &Path) -> Result<Vec<SavedQuery>> {
@@ -333,6 +403,62 @@ pipeline = "[ { \"$group\": { \"_id\": \"$userId\" } } ]"
         assert_eq!(queries[0].name, "active_users");
         assert_eq!(aggregations.len(), 1);
         assert_eq!(aggregations[0].name, "orders_by_user");
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn write_saved_query_persists_toml() -> Result<()> {
+        let root = temp_root("write_saved_query");
+        let repo_root = root.join("repo");
+
+        let paths = ConfigPaths {
+            global_root: root.join("global"),
+            repo_root: Some(repo_root),
+        };
+        let query = SavedQuery {
+            name: "recent_orders".to_string(),
+            connection: Some("local".to_string()),
+            database: "lazycompass".to_string(),
+            collection: "orders".to_string(),
+            filter: Some("{ \"status\": \"open\" }".to_string()),
+            projection: None,
+            sort: None,
+            limit: Some(50),
+            notes: None,
+        };
+
+        let path = write_saved_query(&paths, &query, false)?;
+        assert!(path.is_file());
+        let contents = fs::read_to_string(&path)?;
+        let roundtrip: SavedQuery = toml::from_str(&contents)?;
+        assert_eq!(roundtrip.name, "recent_orders");
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn write_saved_aggregation_rejects_overwrite_without_flag() -> Result<()> {
+        let root = temp_root("write_saved_aggregation");
+        let repo_root = root.join("repo");
+
+        let paths = ConfigPaths {
+            global_root: root.join("global"),
+            repo_root: Some(repo_root),
+        };
+        let aggregation = SavedAggregation {
+            name: "orders_by_user".to_string(),
+            connection: Some("local".to_string()),
+            database: "lazycompass".to_string(),
+            collection: "orders".to_string(),
+            pipeline: "[]".to_string(),
+            notes: None,
+        };
+
+        let _ = write_saved_aggregation(&paths, &aggregation, false)?;
+        assert!(write_saved_aggregation(&paths, &aggregation, false).is_err());
 
         let _ = fs::remove_dir_all(&root);
         Ok(())

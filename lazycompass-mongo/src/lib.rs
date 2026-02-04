@@ -34,6 +34,31 @@ pub struct DocumentListSpec {
     pub limit: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct DocumentInsertSpec {
+    pub connection: Option<String>,
+    pub database: String,
+    pub collection: String,
+    pub document: Document,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocumentReplaceSpec {
+    pub connection: Option<String>,
+    pub database: String,
+    pub collection: String,
+    pub id: Bson,
+    pub document: Document,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocumentDeleteSpec {
+    pub connection: Option<String>,
+    pub database: String,
+    pub collection: String,
+    pub id: Bson,
+}
+
 #[derive(Debug, Default)]
 pub struct MongoExecutor;
 
@@ -213,6 +238,87 @@ impl MongoExecutor {
             .context("failed to load documents")?;
         Ok(documents)
     }
+
+    pub async fn insert_document(
+        &self,
+        config: &Config,
+        spec: &DocumentInsertSpec,
+    ) -> Result<Bson> {
+        let connection = self.resolve_connection(config, spec.connection.as_deref())?;
+        let client = Client::with_uri_str(&connection.uri)
+            .await
+            .with_context(|| format!("unable to connect to {}", connection.uri))?;
+        let database = client.database(&spec.database);
+        let collection = database.collection::<Document>(&spec.collection);
+
+        let result = collection
+            .insert_one(spec.document.clone())
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to insert document into {}.{}",
+                    spec.database, spec.collection
+                )
+            })?;
+        Ok(result.inserted_id)
+    }
+
+    pub async fn replace_document(
+        &self,
+        config: &Config,
+        spec: &DocumentReplaceSpec,
+    ) -> Result<()> {
+        let connection = self.resolve_connection(config, spec.connection.as_deref())?;
+        let client = Client::with_uri_str(&connection.uri)
+            .await
+            .with_context(|| format!("unable to connect to {}", connection.uri))?;
+        let database = client.database(&spec.database);
+        let collection = database.collection::<Document>(&spec.collection);
+
+        let filter = bson::doc! { "_id": spec.id.clone() };
+        let result = collection
+            .replace_one(filter, spec.document.clone())
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to replace document in {}.{}",
+                    spec.database, spec.collection
+                )
+            })?;
+        if result.matched_count == 0 {
+            anyhow::bail!(
+                "document not found in {}.{}",
+                spec.database,
+                spec.collection
+            );
+        }
+        Ok(())
+    }
+
+    pub async fn delete_document(&self, config: &Config, spec: &DocumentDeleteSpec) -> Result<()> {
+        let connection = self.resolve_connection(config, spec.connection.as_deref())?;
+        let client = Client::with_uri_str(&connection.uri)
+            .await
+            .with_context(|| format!("unable to connect to {}", connection.uri))?;
+        let database = client.database(&spec.database);
+        let collection = database.collection::<Document>(&spec.collection);
+
+        let filter = bson::doc! { "_id": spec.id.clone() };
+        let result = collection.delete_one(filter).await.with_context(|| {
+            format!(
+                "failed to delete document from {}.{}",
+                spec.database, spec.collection
+            )
+        })?;
+        if result.deleted_count == 0 {
+            anyhow::bail!(
+                "document not found in {}.{}",
+                spec.database,
+                spec.collection
+            );
+        }
+        Ok(())
+    }
 }
 
 fn normalize_json_option(value: Option<String>) -> Option<String> {
@@ -226,7 +332,7 @@ fn normalize_json_option(value: Option<String>) -> Option<String> {
     })
 }
 
-fn parse_json_document(label: &str, value: &str) -> Result<Document> {
+pub fn parse_json_document(label: &str, value: &str) -> Result<Document> {
     let json: Value =
         serde_json::from_str(value).with_context(|| format!("invalid JSON in {label}"))?;
     let bson = bson::to_bson(&json).with_context(|| format!("invalid JSON in {label}"))?;

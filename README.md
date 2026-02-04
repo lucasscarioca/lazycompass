@@ -47,6 +47,10 @@ Start the TUI:
 lazycompass
 ```
 
+Write actions open your `$VISUAL` or `$EDITOR` for JSON/TOML editing.
+
+Documents screen keys: `i` insert, `e` edit, `d` delete, `Q` save query, `A` save aggregation.
+
 Run a saved query or aggregation:
 
 ```bash
