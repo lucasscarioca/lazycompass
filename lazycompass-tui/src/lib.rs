@@ -574,6 +574,10 @@ impl App {
     }
 
     fn perform_confirm_action(&mut self, action: ConfirmAction) -> Result<()> {
+        if self.read_only && matches!(action, ConfirmAction::DeleteDocument { .. }) {
+            self.message = Some("read-only mode: write operations are disabled".to_string());
+            return Ok(());
+        }
         match action {
             ConfirmAction::DeleteDocument {
                 spec,
@@ -601,8 +605,20 @@ impl App {
         Ok(())
     }
 
+    fn block_if_read_only(&mut self) -> bool {
+        if self.read_only {
+            self.message = Some("read-only mode: write operations are disabled".to_string());
+            true
+        } else {
+            false
+        }
+    }
+
     fn request_delete_document(&mut self) -> Result<()> {
         if !matches!(self.screen, Screen::Documents | Screen::DocumentView) {
+            return Ok(());
+        }
+        if self.block_if_read_only() {
             return Ok(());
         }
         let result = (|| -> Result<()> {
@@ -636,6 +652,9 @@ impl App {
         if self.screen != Screen::Documents {
             return Ok(());
         }
+        if self.block_if_read_only() {
+            return Ok(());
+        }
         let result = (|| -> Result<()> {
             let (connection, database, collection) = self.selected_context()?;
             let contents = self.open_editor(terminal, "insert", "{}")?;
@@ -662,6 +681,9 @@ impl App {
 
     fn edit_document(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
         if !matches!(self.screen, Screen::Documents | Screen::DocumentView) {
+            return Ok(());
+        }
+        if self.block_if_read_only() {
             return Ok(());
         }
         let result = (|| -> Result<()> {

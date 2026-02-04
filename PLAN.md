@@ -53,7 +53,7 @@ Tasks:
 - [x] Add a read-only toggle in config and CLI flag
   - CLI: `--read-only` (or `--write-enabled` with default off)
   - TUI: visible banner/status when read-only is active
-- [ ] Block write operations in read-only mode
+- [x] Block write operations in read-only mode
   - Insert/edit/delete in TUI
   - CLI write paths (future: inline writes)
 - [ ] Improve destructive confirmations
