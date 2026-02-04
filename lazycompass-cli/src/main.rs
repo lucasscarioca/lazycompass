@@ -315,6 +315,7 @@ fn init_logging(paths: &ConfigPaths, config: &Config) -> Result<()> {
         fs::create_dir_all(parent)
             .with_context(|| format!("unable to create log directory {}", parent.display()))?;
     }
+    rotate_logs_if_needed(&log_path, &config.logging)?;
     let file = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -338,6 +339,68 @@ fn init_logging(paths: &ConfigPaths, config: &Config) -> Result<()> {
     let subscriber = tracing_subscriber::registry().with(filter).with(fmt_layer);
     tracing::subscriber::set_global_default(subscriber).context("unable to initialize logging")?;
     Ok(())
+}
+
+fn rotate_logs_if_needed(path: &Path, logging: &lazycompass_core::LoggingConfig) -> Result<()> {
+    let max_size = logging.max_size_bytes();
+    let max_backups = logging.max_backups();
+    if max_backups == 0 {
+        return Ok(());
+    }
+
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(());
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("unable to read log metadata {}", path.display()));
+        }
+    };
+
+    if metadata.len() < max_size {
+        return Ok(());
+    }
+
+    rotate_log_files(path, max_backups)
+}
+
+fn rotate_log_files(path: &Path, max_backups: u64) -> Result<()> {
+    if max_backups == 0 {
+        return Ok(());
+    }
+
+    let oldest = rotated_log_path(path, max_backups);
+    if oldest.exists() {
+        fs::remove_file(&oldest)
+            .with_context(|| format!("unable to remove log file {}", oldest.display()))?;
+    }
+
+    for index in (1..max_backups).rev() {
+        let from = rotated_log_path(path, index);
+        if from.exists() {
+            let to = rotated_log_path(path, index + 1);
+            fs::rename(&from, &to)
+                .with_context(|| format!("unable to rotate log file {}", from.display()))?;
+        }
+    }
+
+    if path.exists() {
+        let first = rotated_log_path(path, 1);
+        fs::rename(path, &first)
+            .with_context(|| format!("unable to rotate log file {}", path.display()))?;
+    }
+
+    Ok(())
+}
+
+fn rotated_log_path(path: &Path, index: u64) -> std::path::PathBuf {
+    let name = path
+        .file_name()
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_else(|| "lazycompass.log".to_string());
+    path.with_file_name(format!("{name}.{index}"))
 }
 
 fn parse_log_level(level: Option<&str>) -> (LevelFilter, Option<String>) {

@@ -98,7 +98,7 @@ Scope:
 Tasks:
 - [x] Add structured logging fields
   - command, component, connection name (redacted), database, collection
-- [ ] Implement log file rotation or max-size cap
+- [x] Implement log file rotation or max-size cap
   - Define retention policy in config
 - [ ] Define exit codes for CLI
   - Success, user error, config error, network error

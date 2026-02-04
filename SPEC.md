@@ -115,6 +115,8 @@ name = "classic"
 [logging]
 level = "info"
 file = "lazycompass.log"
+max_size_mb = 10
+max_backups = 3
 ```
 
 Theme notes:
@@ -134,6 +136,8 @@ Logging notes:
 - `logging.level` defaults to `info`.
 - `logging.file` defaults to `~/.config/lazycompass/lazycompass.log`.
 - Relative `logging.file` paths are resolved against the global config directory.
+- `logging.max_size_mb` defaults to 10.
+- `logging.max_backups` defaults to 3.
 
 Read-only notes:
 

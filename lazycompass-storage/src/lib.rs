@@ -285,6 +285,16 @@ fn validate_config(config: &Config) -> Result<()> {
     {
         anyhow::bail!("query timeout must be greater than 0");
     }
+    if let Some(max_size_mb) = config.logging.max_size_mb
+        && max_size_mb == 0
+    {
+        anyhow::bail!("logging max_size_mb must be greater than 0");
+    }
+    if let Some(max_backups) = config.logging.max_backups
+        && max_backups == 0
+    {
+        anyhow::bail!("logging max_backups must be greater than 0");
+    }
     Ok(())
 }
 
@@ -309,6 +319,8 @@ fn merge_config(global: Config, repo: Config) -> Config {
     let logging = LoggingConfig {
         level: repo.logging.level.or(global.logging.level),
         file: repo.logging.file.or(global.logging.file),
+        max_size_mb: repo.logging.max_size_mb.or(global.logging.max_size_mb),
+        max_backups: repo.logging.max_backups.or(global.logging.max_backups),
     };
     let read_only = repo.read_only.or(global.read_only);
     let timeouts = TimeoutConfig {
@@ -627,6 +639,8 @@ uri = "${{{missing_var}}}"
             logging: LoggingConfig {
                 level: None,
                 file: Some("logs/lazycompass.log".to_string()),
+                max_size_mb: None,
+                max_backups: None,
             },
             read_only: None,
             timeouts: TimeoutConfig::default(),

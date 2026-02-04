@@ -32,6 +32,8 @@ pub struct ThemeConfig {
 pub struct LoggingConfig {
     pub level: Option<String>,
     pub file: Option<String>,
+    pub max_size_mb: Option<u64>,
+    pub max_backups: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -42,6 +44,21 @@ pub struct TimeoutConfig {
 
 pub const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 10_000;
 pub const DEFAULT_QUERY_TIMEOUT_MS: u64 = 30_000;
+pub const DEFAULT_LOG_MAX_SIZE_MB: u64 = 10;
+pub const DEFAULT_LOG_MAX_BACKUPS: u64 = 3;
+
+impl LoggingConfig {
+    pub fn max_size_bytes(&self) -> u64 {
+        self.max_size_mb
+            .unwrap_or(DEFAULT_LOG_MAX_SIZE_MB)
+            .saturating_mul(1024)
+            .saturating_mul(1024)
+    }
+
+    pub fn max_backups(&self) -> u64 {
+        self.max_backups.unwrap_or(DEFAULT_LOG_MAX_BACKUPS)
+    }
+}
 
 pub fn redact_connection_uri(uri: &str) -> String {
     let Some(scheme_end) = uri.find("://") else {
