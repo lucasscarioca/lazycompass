@@ -443,6 +443,31 @@ file = "repo.log"
     }
 
     #[test]
+    fn log_file_path_uses_global_root_for_relative() -> Result<()> {
+        let root = temp_root("log_path");
+        let global_root = root.join("global");
+        let repo_root = root.join("repo");
+        let paths = ConfigPaths {
+            global_root: global_root.clone(),
+            repo_root: Some(repo_root),
+        };
+        let config = Config {
+            connections: Vec::new(),
+            theme: lazycompass_core::ThemeConfig::default(),
+            logging: LoggingConfig {
+                level: None,
+                file: Some("logs/lazycompass.log".to_string()),
+            },
+        };
+
+        let resolved = log_file_path(&paths, &config);
+        assert_eq!(resolved, global_root.join("logs/lazycompass.log"));
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn load_saved_specs_from_repo() -> Result<()> {
         let root = temp_root("saved_specs");
         let repo_root = root.join("repo");

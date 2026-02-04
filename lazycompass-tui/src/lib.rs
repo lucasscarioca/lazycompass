@@ -1647,3 +1647,46 @@ fn format_document(document: &Document) -> Vec<String> {
         Err(_) => vec![format!("{document:?}")],
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn key_bindings_are_unique() {
+        let mut seen = HashSet::new();
+        for binding in KEY_BINDINGS {
+            let key = format!("{:?}:{:?}", binding.code, binding.modifiers);
+            assert!(seen.insert(key), "duplicate key binding: {binding:?}");
+        }
+    }
+
+    #[test]
+    fn resolve_theme_warns_on_unknown() {
+        let config = Config {
+            connections: Vec::new(),
+            theme: lazycompass_core::ThemeConfig {
+                name: Some("mystery".to_string()),
+            },
+            logging: lazycompass_core::LoggingConfig::default(),
+        };
+        let (theme, warning) = resolve_theme(&config);
+        assert!(warning.is_some());
+        assert_eq!(theme.border, THEME_CLASSIC.border);
+    }
+
+    #[test]
+    fn resolve_theme_uses_ember() {
+        let config = Config {
+            connections: Vec::new(),
+            theme: lazycompass_core::ThemeConfig {
+                name: Some("ember".to_string()),
+            },
+            logging: lazycompass_core::LoggingConfig::default(),
+        };
+        let (theme, warning) = resolve_theme(&config);
+        assert!(warning.is_none());
+        assert_eq!(theme.accent, THEME_EMBER.accent);
+    }
+}
