@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionSpec {
@@ -90,4 +91,78 @@ pub struct AggregationRequest {
     pub connection: Option<String>,
     pub output: OutputFormat,
     pub target: AggregationTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum SpecValidationError {
+    #[error("field `{field}` cannot be empty")]
+    EmptyField { field: &'static str },
+}
+
+impl SavedQuery {
+    pub fn validate(&self) -> Result<(), SpecValidationError> {
+        validate_required("name", &self.name)?;
+        validate_required("database", &self.database)?;
+        validate_required("collection", &self.collection)?;
+        Ok(())
+    }
+}
+
+impl SavedAggregation {
+    pub fn validate(&self) -> Result<(), SpecValidationError> {
+        validate_required("name", &self.name)?;
+        validate_required("database", &self.database)?;
+        validate_required("collection", &self.collection)?;
+        validate_required("pipeline", &self.pipeline)?;
+        Ok(())
+    }
+}
+
+fn validate_required(field: &'static str, value: &str) -> Result<(), SpecValidationError> {
+    if value.trim().is_empty() {
+        return Err(SpecValidationError::EmptyField { field });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_query_validation_rejects_empty_fields() {
+        let query = SavedQuery {
+            name: " ".to_string(),
+            connection: None,
+            database: "lazycompass".to_string(),
+            collection: "users".to_string(),
+            filter: None,
+            projection: None,
+            sort: None,
+            limit: None,
+            notes: None,
+        };
+
+        assert!(matches!(
+            query.validate(),
+            Err(SpecValidationError::EmptyField { field: "name" })
+        ));
+    }
+
+    #[test]
+    fn saved_aggregation_validation_rejects_empty_pipeline() {
+        let aggregation = SavedAggregation {
+            name: "orders_by_user".to_string(),
+            connection: None,
+            database: "lazycompass".to_string(),
+            collection: "orders".to_string(),
+            pipeline: "  ".to_string(),
+            notes: None,
+        };
+
+        assert!(matches!(
+            aggregation.validate(),
+            Err(SpecValidationError::EmptyField { field: "pipeline" })
+        ));
+    }
 }
