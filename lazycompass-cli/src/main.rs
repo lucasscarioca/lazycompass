@@ -21,6 +21,8 @@ const DEFAULT_INSTALL_URL: &str =
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+    #[arg(long, global = true)]
+    write_enabled: bool,
 }
 
 #[derive(Subcommand)]
@@ -93,9 +95,14 @@ fn main() -> Result<()> {
             let cwd = std::env::current_dir().context("unable to resolve current directory")?;
             let paths = ConfigPaths::resolve_from(&cwd)?;
             let config = load_config(&paths)?;
+            let read_only = if cli.write_enabled {
+                false
+            } else {
+                config.read_only()
+            };
             init_logging(&paths, &config)?;
             tracing::info!(command = "tui", "lazycompass started");
-            lazycompass_tui::run()?;
+            lazycompass_tui::run(read_only)?;
         }
     }
 

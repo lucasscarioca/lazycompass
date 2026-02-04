@@ -16,6 +16,8 @@ pub struct Config {
     pub theme: ThemeConfig,
     #[serde(default)]
     pub logging: LoggingConfig,
+    #[serde(default)]
+    pub read_only: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -68,6 +70,12 @@ impl OutputFormat {
             OutputFormat::JsonPretty => "json",
             OutputFormat::Table => "table",
         }
+    }
+}
+
+impl Config {
+    pub fn read_only(&self) -> bool {
+        self.read_only.unwrap_or(true)
     }
 }
 

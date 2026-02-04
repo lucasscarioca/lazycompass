@@ -43,20 +43,20 @@ Deliverables:
 
 ### 7.2 Safety and Guardrails
 
-Status: planned
+Status: in progress
 
 Scope:
 - Default to read-only unless explicitly enabled
 - Clear safety cues for destructive operations
 
 Tasks:
-- Add a read-only toggle in config and CLI flag
+- [x] Add a read-only toggle in config and CLI flag
   - CLI: `--read-only` (or `--write-enabled` with default off)
   - TUI: visible banner/status when read-only is active
-- Block write operations in read-only mode
+- [ ] Block write operations in read-only mode
   - Insert/edit/delete in TUI
   - CLI write paths (future: inline writes)
-- Improve destructive confirmations
+- [ ] Improve destructive confirmations
   - Show context (connection, db, collection, _id)
   - Require explicit confirmation keyword for deletes (ex: type `delete`)
 

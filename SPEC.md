@@ -98,6 +98,8 @@ CLI/TUI -> core models -> storage (read config/specs) -> mongo (execute) -> outp
 Example:
 
 ```
+read_only = true
+
 [[connections]]
 name = "local"
 uri = "mongodb://localhost:27017"
@@ -128,6 +130,10 @@ Logging notes:
 - `logging.level` defaults to `info`.
 - `logging.file` defaults to `~/.config/lazycompass/lazycompass.log`.
 - Relative `logging.file` paths are resolved against the global config directory.
+
+Read-only notes:
+
+- `read_only` defaults to true; set to false to enable writes.
 
 ### 8.4 Query and Aggregation Files (TOML)
 

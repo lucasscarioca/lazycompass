@@ -300,11 +300,13 @@ fn merge_config(global: Config, repo: Config) -> Config {
         level: repo.logging.level.or(global.logging.level),
         file: repo.logging.file.or(global.logging.file),
     };
+    let read_only = repo.read_only.or(global.read_only);
 
     Config {
         connections,
         theme,
         logging,
+        read_only,
     }
 }
 
@@ -440,7 +442,9 @@ mod tests {
 
         write_file(
             &global_root.join("config.toml"),
-            r#"[[connections]]
+            r#"read_only = true
+
+[[connections]]
 name = "shared"
 uri = "mongodb://global"
 default_database = "global_db"
@@ -459,7 +463,9 @@ file = "global.log"
         );
         write_file(
             &repo_root.join(".lazycompass/config.toml"),
-            r#"[[connections]]
+            r#"read_only = false
+
+[[connections]]
 name = "shared"
 uri = "mongodb://repo"
 default_database = "repo_db"
@@ -503,6 +509,7 @@ file = "repo.log"
         assert_eq!(config.theme.name.as_deref(), Some("ember"));
         assert_eq!(config.logging.level.as_deref(), Some("debug"));
         assert_eq!(config.logging.file.as_deref(), Some("repo.log"));
+        assert_eq!(config.read_only, Some(false));
 
         let _ = fs::remove_dir_all(&root);
         Ok(())
@@ -596,6 +603,7 @@ uri = "${{{missing_var}}}"
                 level: None,
                 file: Some("logs/lazycompass.log".to_string()),
             },
+            read_only: None,
         };
 
         let resolved = log_file_path(&paths, &config);

@@ -387,6 +387,7 @@ struct App {
     executor: MongoExecutor,
     runtime: Runtime,
     theme: Theme,
+    read_only: bool,
     screen: Screen,
     connection_index: Option<usize>,
     database_items: Vec<String>,
@@ -423,6 +424,7 @@ impl App {
         } else {
             None
         };
+        let read_only = storage.config.read_only();
 
         Ok(Self {
             paths,
@@ -430,6 +432,7 @@ impl App {
             executor: MongoExecutor::new(),
             runtime,
             theme,
+            read_only,
             screen: Screen::Connections,
             connection_index,
             database_items: Vec::new(),
@@ -1398,10 +1401,19 @@ impl App {
         let collection = self.selected_collection().unwrap_or("-");
         let path = format!("Conn: {connection}  Db: {database}  Coll: {collection}");
 
-        vec![
+        let mut lines = vec![
             Line::from(Span::styled(title.to_string(), self.theme.title_style())),
             Line::from(Span::styled(path, self.theme.text_style())),
-        ]
+        ];
+
+        if self.read_only {
+            lines.push(Line::from(Span::styled(
+                "MODE: READ-ONLY",
+                self.theme.warning_style().add_modifier(Modifier::BOLD),
+            )));
+        }
+
+        lines
     }
 
     fn footer_lines(&self) -> Vec<Line<'static>> {
@@ -1526,10 +1538,11 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     vertical[1]
 }
 
-pub fn run() -> Result<()> {
+pub fn run(read_only: bool) -> Result<()> {
     let cwd = std::env::current_dir().context("unable to resolve current directory")?;
     let paths = ConfigPaths::resolve_from(&cwd)?;
-    let storage = load_storage(&paths)?;
+    let mut storage = load_storage(&paths)?;
+    storage.config.read_only = Some(read_only);
     let mut app = App::new(paths, storage)?;
 
     let mut terminal = setup_terminal()?;
@@ -1670,6 +1683,7 @@ mod tests {
                 name: Some("mystery".to_string()),
             },
             logging: lazycompass_core::LoggingConfig::default(),
+            read_only: None,
         };
         let (theme, warning) = resolve_theme(&config);
         assert!(warning.is_some());
@@ -1684,6 +1698,7 @@ mod tests {
                 name: Some("ember".to_string()),
             },
             logging: lazycompass_core::LoggingConfig::default(),
+            read_only: None,
         };
         let (theme, warning) = resolve_theme(&config);
         assert!(warning.is_none());
