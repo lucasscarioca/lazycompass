@@ -243,7 +243,7 @@ add_to_path() {
   fi
 }
 
-install_repo="${repo_override:-${LAZYCOMPASS_REPO:-}}"
+install_repo="${repo_override:-${LAZYCOMPASS_REPO:-lucasscarioca/lazycompass}}"
 source_dir=$(script_dir)
 if [[ -z "$install_repo" ]]; then
   install_repo=$(resolve_repo_from_git "$source_dir" || true)

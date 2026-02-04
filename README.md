@@ -14,6 +14,12 @@ From source (recommended for now, requires Rust toolchain):
 ./install.sh
 ```
 
+Install via curl (works once the repo is public):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lucasscarioca/lazycompass/main/install.sh | bash
+```
+
 Or via Cargo directly:
 
 ```bash
@@ -24,6 +30,13 @@ Upgrade (re-runs the installer):
 
 ```bash
 lazycompass upgrade
+```
+
+Override the installer URL (optional):
+
+```bash
+LAZYCOMPASS_INSTALL_URL=https://raw.githubusercontent.com/lucasscarioca/lazycompass/main/install.sh \
+  lazycompass upgrade
 ```
 
 ## Usage

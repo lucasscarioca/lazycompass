@@ -7,6 +7,9 @@ use lazycompass_storage::ConfigPaths;
 use std::path::Path;
 use std::process::Command;
 
+const DEFAULT_INSTALL_URL: &str =
+    "https://raw.githubusercontent.com/lucasscarioca/lazycompass/main/install.sh";
+
 #[derive(Parser)]
 #[command(name = "lazycompass")]
 #[command(about = "MongoDB TUI + CLI client", version)]
@@ -246,21 +249,6 @@ fn run_upgrade(args: UpgradeArgs) -> Result<()> {
         installer_args.push("--no-modify-path".to_string());
     }
 
-    if let Ok(url) = std::env::var("LAZYCOMPASS_INSTALL_URL") {
-        let status = Command::new("bash")
-            .arg("-c")
-            .arg("curl -fsSL \"$1\" | bash -s -- \"${@:2}\"")
-            .arg("bash")
-            .arg(url)
-            .args(&installer_args)
-            .status()
-            .context("failed to run installer from LAZYCOMPASS_INSTALL_URL")?;
-        if !status.success() {
-            anyhow::bail!("installer exited with non-zero status");
-        }
-        return Ok(());
-    }
-
     if Path::new("install.sh").is_file() {
         let status = Command::new("bash")
             .arg("install.sh")
@@ -273,9 +261,20 @@ fn run_upgrade(args: UpgradeArgs) -> Result<()> {
         return Ok(());
     }
 
-    println!("lazycompass upgrade");
-    println!("- install.sh not found in current directory");
-    println!("- set LAZYCOMPASS_INSTALL_URL or re-run ./install.sh from the repo");
-    println!("- or reinstall with: cargo install --path . -p lazycompass --locked");
+    let url = std::env::var("LAZYCOMPASS_INSTALL_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_INSTALL_URL.to_string());
+    let status = Command::new("bash")
+        .arg("-c")
+        .arg("curl -fsSL \"$1\" | bash -s -- \"${@:2}\"")
+        .arg("bash")
+        .arg(url)
+        .args(&installer_args)
+        .status()
+        .context("failed to run installer from URL")?;
+    if !status.success() {
+        anyhow::bail!("installer exited with non-zero status");
+    }
     Ok(())
 }
