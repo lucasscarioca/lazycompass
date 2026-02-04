@@ -365,6 +365,8 @@ enum Screen {
 struct ConfirmState {
     prompt: String,
     action: ConfirmAction,
+    input: String,
+    required: Option<&'static str>,
 }
 
 #[derive(Debug, Clone)]
@@ -551,9 +553,42 @@ impl App {
         key: KeyEvent,
         _terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> Result<bool> {
-        let Some(confirm) = self.confirm.take() else {
+        let Some(mut confirm) = self.confirm.take() else {
             return Ok(false);
         };
+
+        if let Some(required) = confirm.required {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.message = Some("cancelled".to_string());
+                }
+                KeyCode::Backspace => {
+                    confirm.input.pop();
+                    self.confirm = Some(confirm);
+                }
+                KeyCode::Enter => {
+                    if confirm.input.trim().eq_ignore_ascii_case(required) {
+                        if let Err(error) = self.perform_confirm_action(confirm.action) {
+                            self.message = Some(error.to_string());
+                        }
+                    } else {
+                        self.confirm = Some(confirm);
+                    }
+                }
+                KeyCode::Char(ch) => {
+                    if !ch.is_control() {
+                        confirm.input.push(ch);
+                    }
+                    self.confirm = Some(confirm);
+                }
+                _ => {
+                    self.confirm = Some(confirm);
+                }
+            }
+
+            self.last_g = false;
+            return Ok(false);
+        }
 
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -625,7 +660,10 @@ impl App {
             let (connection, database, collection) = self.selected_context()?;
             let document = self.selected_document()?;
             let id = document_id(document)?;
-            let prompt = format!("delete document {}? (y/n)", format_bson(&id));
+            let prompt = format!(
+                "delete document {} (Conn: {connection}, Db: {database}, Coll: {collection})",
+                format_bson(&id)
+            );
             let spec = DocumentDeleteSpec {
                 connection: Some(connection),
                 database,
@@ -638,6 +676,8 @@ impl App {
                     spec,
                     return_to_documents: self.screen == Screen::DocumentView,
                 },
+                input: String::new(),
+                required: Some("delete"),
             });
             Ok(())
         })();
@@ -754,6 +794,8 @@ impl App {
                 self.confirm = Some(ConfirmState {
                     prompt: format!("overwrite saved query '{}'? (y/n)", query.name),
                     action: ConfirmAction::OverwriteQuery { query },
+                    input: String::new(),
+                    required: None,
                 });
                 return Ok(());
             }
@@ -799,6 +841,8 @@ impl App {
                 self.confirm = Some(ConfirmState {
                     prompt: format!("overwrite saved aggregation '{}'? (y/n)", aggregation.name),
                     action: ConfirmAction::OverwriteAggregation { aggregation },
+                    input: String::new(),
+                    required: None,
                 });
                 return Ok(());
             }
@@ -1442,12 +1486,20 @@ impl App {
         let hint = self.hint_line();
 
         if let Some(confirm) = &self.confirm {
+            let action_line = if let Some(required) = confirm.required {
+                format!(
+                    "type '{}' then Enter: {}  Esc cancel",
+                    required, confirm.input
+                )
+            } else {
+                "y confirm  n cancel".to_string()
+            };
             vec![
                 Line::from(Span::styled(
                     confirm.prompt.clone(),
                     self.theme.warning_style(),
                 )),
-                Line::from("y confirm  n cancel"),
+                Line::from(action_line),
             ]
         } else if let Some(message) = &self.message {
             vec![

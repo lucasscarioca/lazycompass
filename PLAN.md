@@ -43,7 +43,7 @@ Deliverables:
 
 ### 7.2 Safety and Guardrails
 
-Status: in progress
+Status: complete
 
 Scope:
 - Default to read-only unless explicitly enabled
@@ -56,7 +56,7 @@ Tasks:
 - [x] Block write operations in read-only mode
   - Insert/edit/delete in TUI
   - CLI write paths (future: inline writes)
-- [ ] Improve destructive confirmations
+- [x] Improve destructive confirmations
   - Show context (connection, db, collection, _id)
   - Require explicit confirmation keyword for deletes (ex: type `delete`)
 
