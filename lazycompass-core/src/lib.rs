@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +19,8 @@ pub struct Config {
     pub logging: LoggingConfig,
     #[serde(default)]
     pub read_only: Option<bool>,
+    #[serde(default)]
+    pub timeouts: TimeoutConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -30,6 +33,15 @@ pub struct LoggingConfig {
     pub level: Option<String>,
     pub file: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TimeoutConfig {
+    pub connect_ms: Option<u64>,
+    pub query_ms: Option<u64>,
+}
+
+pub const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 10_000;
+pub const DEFAULT_QUERY_TIMEOUT_MS: u64 = 30_000;
 
 pub fn redact_connection_uri(uri: &str) -> String {
     let Some(scheme_end) = uri.find("://") else {
@@ -76,6 +88,18 @@ impl OutputFormat {
 impl Config {
     pub fn read_only(&self) -> bool {
         self.read_only.unwrap_or(true)
+    }
+
+    pub fn connect_timeout(&self) -> Duration {
+        Duration::from_millis(
+            self.timeouts
+                .connect_ms
+                .unwrap_or(DEFAULT_CONNECT_TIMEOUT_MS),
+        )
+    }
+
+    pub fn query_timeout(&self) -> Duration {
+        Duration::from_millis(self.timeouts.query_ms.unwrap_or(DEFAULT_QUERY_TIMEOUT_MS))
     }
 }
 
@@ -236,5 +260,18 @@ mod tests {
 
         let no_creds = "mongodb://localhost:27017";
         assert_eq!(redact_connection_uri(no_creds), no_creds);
+    }
+
+    #[test]
+    fn default_timeouts_are_applied() {
+        let config = Config::default();
+        assert_eq!(
+            config.connect_timeout(),
+            Duration::from_millis(DEFAULT_CONNECT_TIMEOUT_MS)
+        );
+        assert_eq!(
+            config.query_timeout(),
+            Duration::from_millis(DEFAULT_QUERY_TIMEOUT_MS)
+        );
     }
 }

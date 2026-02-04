@@ -3,7 +3,10 @@ pub use mongodb::bson::{Bson, Document};
 use anyhow::{Context, Result};
 use futures::TryStreamExt;
 use lazycompass_core::{Config, ConnectionSpec, redact_connection_uri};
-use mongodb::{Client, bson, options::FindOptions};
+use mongodb::{
+    Client, bson,
+    options::{AggregateOptions, ClientOptions, FindOptions},
+};
 use serde_json::Value;
 
 #[derive(Debug, Clone)]
@@ -104,7 +107,7 @@ impl MongoExecutor {
 
     pub async fn execute_query(&self, config: &Config, spec: &QuerySpec) -> Result<Vec<Document>> {
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
-        let client = connect(connection).await?;
+        let client = connect(config, connection).await?;
         let database = client.database(&spec.database);
         let collection = database.collection::<Document>(&spec.collection);
 
@@ -126,6 +129,7 @@ impl MongoExecutor {
         if let Some(limit) = spec.limit {
             options.limit = Some(limit as i64);
         }
+        options.max_time = Some(config.query_timeout());
 
         let cursor = collection
             .find(filter)
@@ -150,17 +154,24 @@ impl MongoExecutor {
         spec: &AggregationSpec,
     ) -> Result<Vec<Document>> {
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
-        let client = connect(connection).await?;
+        let client = connect(config, connection).await?;
         let database = client.database(&spec.database);
         let collection = database.collection::<Document>(&spec.collection);
 
         let pipeline = parse_json_pipeline(&spec.pipeline)?;
-        let cursor = collection.aggregate(pipeline).await.with_context(|| {
-            format!(
-                "failed to run aggregation on {}.{}",
-                spec.database, spec.collection
-            )
-        })?;
+        let options = AggregateOptions::builder()
+            .max_time(config.query_timeout())
+            .build();
+        let cursor = collection
+            .aggregate(pipeline)
+            .with_options(options)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to run aggregation on {}.{}",
+                    spec.database, spec.collection
+                )
+            })?;
         let documents = cursor
             .try_collect()
             .await
@@ -174,7 +185,7 @@ impl MongoExecutor {
         connection: Option<&str>,
     ) -> Result<Vec<String>> {
         let connection = self.resolve_connection(config, connection)?;
-        let client = connect(connection).await?;
+        let client = connect(config, connection).await?;
         let databases = client
             .list_database_names()
             .await
@@ -189,7 +200,7 @@ impl MongoExecutor {
         database: &str,
     ) -> Result<Vec<String>> {
         let connection = self.resolve_connection(config, connection)?;
-        let client = connect(connection).await?;
+        let client = connect(config, connection).await?;
         let database = client.database(database);
         let collections = database
             .list_collection_names()
@@ -204,13 +215,14 @@ impl MongoExecutor {
         spec: &DocumentListSpec,
     ) -> Result<Vec<Document>> {
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
-        let client = connect(connection).await?;
+        let client = connect(config, connection).await?;
         let database = client.database(&spec.database);
         let collection = database.collection::<Document>(&spec.collection);
 
         let mut options = FindOptions::default();
         options.skip = Some(spec.skip);
         options.limit = Some(spec.limit as i64);
+        options.max_time = Some(config.query_timeout());
 
         let cursor = collection
             .find(Document::new())
@@ -235,7 +247,7 @@ impl MongoExecutor {
         spec: &DocumentInsertSpec,
     ) -> Result<Bson> {
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
-        let client = connect(connection).await?;
+        let client = connect(config, connection).await?;
         let database = client.database(&spec.database);
         let collection = database.collection::<Document>(&spec.collection);
 
@@ -257,7 +269,7 @@ impl MongoExecutor {
         spec: &DocumentReplaceSpec,
     ) -> Result<()> {
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
-        let client = connect(connection).await?;
+        let client = connect(config, connection).await?;
         let database = client.database(&spec.database);
         let collection = database.collection::<Document>(&spec.collection);
 
@@ -283,7 +295,7 @@ impl MongoExecutor {
 
     pub async fn delete_document(&self, config: &Config, spec: &DocumentDeleteSpec) -> Result<()> {
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
-        let client = connect(connection).await?;
+        let client = connect(config, connection).await?;
         let database = client.database(&spec.database);
         let collection = database.collection::<Document>(&spec.collection);
 
@@ -305,11 +317,14 @@ impl MongoExecutor {
     }
 }
 
-async fn connect(connection: &ConnectionSpec) -> Result<Client> {
+async fn connect(config: &Config, connection: &ConnectionSpec) -> Result<Client> {
     let redacted_uri = redact_connection_uri(&connection.uri);
-    Client::with_uri_str(&connection.uri)
+    let mut options = ClientOptions::parse(&connection.uri)
         .await
-        .with_context(|| format!("unable to connect to {redacted_uri}"))
+        .with_context(|| format!("unable to parse connection options for {redacted_uri}"))?;
+    options.connect_timeout = Some(config.connect_timeout());
+    options.server_selection_timeout = Some(config.connect_timeout());
+    Client::with_options(options).with_context(|| format!("unable to connect to {redacted_uri}"))
 }
 
 fn normalize_json_option(value: Option<String>) -> Option<String> {

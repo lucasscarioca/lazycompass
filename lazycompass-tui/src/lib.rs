@@ -1758,6 +1758,7 @@ mod tests {
             },
             logging: lazycompass_core::LoggingConfig::default(),
             read_only: None,
+            timeouts: lazycompass_core::TimeoutConfig::default(),
         };
         let (theme, warning) = resolve_theme(&config);
         assert!(warning.is_some());
@@ -1773,6 +1774,7 @@ mod tests {
             },
             logging: lazycompass_core::LoggingConfig::default(),
             read_only: None,
+            timeouts: lazycompass_core::TimeoutConfig::default(),
         };
         let (theme, warning) = resolve_theme(&config);
         assert!(warning.is_none());

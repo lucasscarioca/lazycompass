@@ -100,6 +100,10 @@ Example:
 ```
 read_only = true
 
+[timeouts]
+connect_ms = 10000
+query_ms = 30000
+
 [[connections]]
 name = "local"
 uri = "mongodb://localhost:27017"
@@ -134,6 +138,11 @@ Logging notes:
 Read-only notes:
 
 - `read_only` defaults to true; set to false to enable writes.
+
+Timeout notes:
+
+- `timeouts.connect_ms` defaults to 10_000 (10s).
+- `timeouts.query_ms` defaults to 30_000 (30s).
 
 ### 8.4 Query and Aggregation Files (TOML)
 

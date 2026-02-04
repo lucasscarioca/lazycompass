@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use lazycompass_core::{Config, LoggingConfig, SavedAggregation, SavedQuery};
+use lazycompass_core::{Config, LoggingConfig, SavedAggregation, SavedQuery, TimeoutConfig};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -275,6 +275,16 @@ fn validate_config(config: &Config) -> Result<()> {
             anyhow::bail!("duplicate connection name '{}'", connection.name);
         }
     }
+    if let Some(timeout) = config.timeouts.connect_ms
+        && timeout == 0
+    {
+        anyhow::bail!("connect timeout must be greater than 0");
+    }
+    if let Some(timeout) = config.timeouts.query_ms
+        && timeout == 0
+    {
+        anyhow::bail!("query timeout must be greater than 0");
+    }
     Ok(())
 }
 
@@ -301,12 +311,17 @@ fn merge_config(global: Config, repo: Config) -> Config {
         file: repo.logging.file.or(global.logging.file),
     };
     let read_only = repo.read_only.or(global.read_only);
+    let timeouts = TimeoutConfig {
+        connect_ms: repo.timeouts.connect_ms.or(global.timeouts.connect_ms),
+        query_ms: repo.timeouts.query_ms.or(global.timeouts.query_ms),
+    };
 
     Config {
         connections,
         theme,
         logging,
         read_only,
+        timeouts,
     }
 }
 
@@ -444,6 +459,10 @@ mod tests {
             &global_root.join("config.toml"),
             r#"read_only = true
 
+[timeouts]
+connect_ms = 5000
+query_ms = 25000
+
 [[connections]]
 name = "shared"
 uri = "mongodb://global"
@@ -464,6 +483,10 @@ file = "global.log"
         write_file(
             &repo_root.join(".lazycompass/config.toml"),
             r#"read_only = false
+
+[timeouts]
+connect_ms = 8000
+query_ms = 40000
 
 [[connections]]
 name = "shared"
@@ -510,6 +533,8 @@ file = "repo.log"
         assert_eq!(config.logging.level.as_deref(), Some("debug"));
         assert_eq!(config.logging.file.as_deref(), Some("repo.log"));
         assert_eq!(config.read_only, Some(false));
+        assert_eq!(config.timeouts.connect_ms, Some(8000));
+        assert_eq!(config.timeouts.query_ms, Some(40000));
 
         let _ = fs::remove_dir_all(&root);
         Ok(())
@@ -604,6 +629,7 @@ uri = "${{{missing_var}}}"
                 file: Some("logs/lazycompass.log".to_string()),
             },
             read_only: None,
+            timeouts: TimeoutConfig::default(),
         };
 
         let resolved = log_file_path(&paths, &config);
