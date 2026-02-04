@@ -2,7 +2,7 @@ pub use mongodb::bson::{Bson, Document};
 
 use anyhow::{Context, Result};
 use futures::TryStreamExt;
-use lazycompass_core::{Config, ConnectionSpec};
+use lazycompass_core::{Config, ConnectionSpec, redact_connection_uri};
 use mongodb::{Client, bson, options::FindOptions};
 use serde_json::Value;
 
@@ -104,9 +104,7 @@ impl MongoExecutor {
 
     pub async fn execute_query(&self, config: &Config, spec: &QuerySpec) -> Result<Vec<Document>> {
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
-        let client = Client::with_uri_str(&connection.uri)
-            .await
-            .with_context(|| format!("unable to connect to {}", connection.uri))?;
+        let client = connect(connection).await?;
         let database = client.database(&spec.database);
         let collection = database.collection::<Document>(&spec.collection);
 
@@ -152,9 +150,7 @@ impl MongoExecutor {
         spec: &AggregationSpec,
     ) -> Result<Vec<Document>> {
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
-        let client = Client::with_uri_str(&connection.uri)
-            .await
-            .with_context(|| format!("unable to connect to {}", connection.uri))?;
+        let client = connect(connection).await?;
         let database = client.database(&spec.database);
         let collection = database.collection::<Document>(&spec.collection);
 
@@ -178,9 +174,7 @@ impl MongoExecutor {
         connection: Option<&str>,
     ) -> Result<Vec<String>> {
         let connection = self.resolve_connection(config, connection)?;
-        let client = Client::with_uri_str(&connection.uri)
-            .await
-            .with_context(|| format!("unable to connect to {}", connection.uri))?;
+        let client = connect(connection).await?;
         let databases = client
             .list_database_names()
             .await
@@ -195,9 +189,7 @@ impl MongoExecutor {
         database: &str,
     ) -> Result<Vec<String>> {
         let connection = self.resolve_connection(config, connection)?;
-        let client = Client::with_uri_str(&connection.uri)
-            .await
-            .with_context(|| format!("unable to connect to {}", connection.uri))?;
+        let client = connect(connection).await?;
         let database = client.database(database);
         let collections = database
             .list_collection_names()
@@ -212,9 +204,7 @@ impl MongoExecutor {
         spec: &DocumentListSpec,
     ) -> Result<Vec<Document>> {
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
-        let client = Client::with_uri_str(&connection.uri)
-            .await
-            .with_context(|| format!("unable to connect to {}", connection.uri))?;
+        let client = connect(connection).await?;
         let database = client.database(&spec.database);
         let collection = database.collection::<Document>(&spec.collection);
 
@@ -245,9 +235,7 @@ impl MongoExecutor {
         spec: &DocumentInsertSpec,
     ) -> Result<Bson> {
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
-        let client = Client::with_uri_str(&connection.uri)
-            .await
-            .with_context(|| format!("unable to connect to {}", connection.uri))?;
+        let client = connect(connection).await?;
         let database = client.database(&spec.database);
         let collection = database.collection::<Document>(&spec.collection);
 
@@ -269,9 +257,7 @@ impl MongoExecutor {
         spec: &DocumentReplaceSpec,
     ) -> Result<()> {
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
-        let client = Client::with_uri_str(&connection.uri)
-            .await
-            .with_context(|| format!("unable to connect to {}", connection.uri))?;
+        let client = connect(connection).await?;
         let database = client.database(&spec.database);
         let collection = database.collection::<Document>(&spec.collection);
 
@@ -297,9 +283,7 @@ impl MongoExecutor {
 
     pub async fn delete_document(&self, config: &Config, spec: &DocumentDeleteSpec) -> Result<()> {
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
-        let client = Client::with_uri_str(&connection.uri)
-            .await
-            .with_context(|| format!("unable to connect to {}", connection.uri))?;
+        let client = connect(connection).await?;
         let database = client.database(&spec.database);
         let collection = database.collection::<Document>(&spec.collection);
 
@@ -319,6 +303,13 @@ impl MongoExecutor {
         }
         Ok(())
     }
+}
+
+async fn connect(connection: &ConnectionSpec) -> Result<Client> {
+    let redacted_uri = redact_connection_uri(&connection.uri);
+    Client::with_uri_str(&connection.uri)
+        .await
+        .with_context(|| format!("unable to connect to {redacted_uri}"))
 }
 
 fn normalize_json_option(value: Option<String>) -> Option<String> {

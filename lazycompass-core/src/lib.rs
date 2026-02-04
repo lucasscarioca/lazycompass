@@ -29,6 +29,32 @@ pub struct LoggingConfig {
     pub file: Option<String>,
 }
 
+pub fn redact_connection_uri(uri: &str) -> String {
+    let Some(scheme_end) = uri.find("://") else {
+        return uri.to_string();
+    };
+    let authority_start = scheme_end + 3;
+    let mut authority_end = uri.len();
+    for (index, ch) in uri[authority_start..].char_indices() {
+        if ch == '/' || ch == '?' {
+            authority_end = authority_start + index;
+            break;
+        }
+    }
+
+    let authority = &uri[authority_start..authority_end];
+    let Some(at_index) = authority.rfind('@') else {
+        return uri.to_string();
+    };
+
+    let mut redacted = String::with_capacity(uri.len());
+    redacted.push_str(&uri[..authority_start]);
+    redacted.push_str("***");
+    redacted.push_str(&authority[at_index..]);
+    redacted.push_str(&uri[authority_end..]);
+    redacted
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
@@ -180,5 +206,27 @@ mod tests {
             aggregation.validate(),
             Err(SpecValidationError::EmptyField { field: "pipeline" })
         ));
+    }
+
+    #[test]
+    fn redact_connection_uri_masks_userinfo() {
+        let uri = "mongodb://user:password@localhost:27017/app?retryWrites=true";
+        let redacted = redact_connection_uri(uri);
+        assert_eq!(
+            redacted,
+            "mongodb://***@localhost:27017/app?retryWrites=true"
+        );
+    }
+
+    #[test]
+    fn redact_connection_uri_handles_srv_and_no_credentials() {
+        let srv = "mongodb+srv://user@cluster0.example.mongodb.net/app";
+        assert_eq!(
+            redact_connection_uri(srv),
+            "mongodb+srv://***@cluster0.example.mongodb.net/app"
+        );
+
+        let no_creds = "mongodb://localhost:27017";
+        assert_eq!(redact_connection_uri(no_creds), no_creds);
     }
 }

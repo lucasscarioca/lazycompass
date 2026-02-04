@@ -31,7 +31,7 @@ Tasks:
 - [x] Add env var interpolation to config loading
   - Resolve `${VAR}` placeholders in config values (connections.uri, logging.file)
   - Define behavior when env var is missing (error + clear message)
-- [ ] Introduce explicit redaction for connection URIs
+- [x] Introduce explicit redaction for connection URIs
   - Mask password/credentials in logs and error messages
   - Keep redaction consistent for TUI + CLI paths
 - [ ] Document secret handling rules in `SPEC.md`
