@@ -3,7 +3,9 @@ use clap::{Args, Parser, Subcommand};
 use lazycompass_core::{
     AggregationRequest, AggregationTarget, OutputFormat, QueryRequest, QueryTarget,
 };
-use lazycompass_storage::ConfigPaths;
+use lazycompass_mongo::{AggregationSpec, Bson, Document, MongoExecutor, QuerySpec};
+use lazycompass_storage::{ConfigPaths, StorageSnapshot, load_storage};
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Command;
 
@@ -79,18 +81,8 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Query(args)) => {
-            let cwd = std::env::current_dir().context("unable to resolve current directory")?;
-            let paths = ConfigPaths::resolve_from(&cwd)?;
-            let request = build_query_request(args)?;
-            print_query_summary(&request, &paths);
-        }
-        Some(Commands::Agg(args)) => {
-            let cwd = std::env::current_dir().context("unable to resolve current directory")?;
-            let paths = ConfigPaths::resolve_from(&cwd)?;
-            let request = build_agg_request(args)?;
-            print_agg_summary(&request, &paths);
-        }
+        Some(Commands::Query(args)) => run_query(args)?,
+        Some(Commands::Agg(args)) => run_agg(args)?,
         Some(Commands::Upgrade(args)) => {
             run_upgrade(args)?;
         }
@@ -170,13 +162,50 @@ fn build_agg_request(args: AggArgs) -> Result<AggregationRequest> {
     })
 }
 
-fn print_query_summary(request: &QueryRequest, paths: &ConfigPaths) {
-    println!("lazycompass-cli (stub)");
-    println!("- mode: query");
-    println!("- output: {}", request.output.label());
+fn run_query(args: QueryArgs) -> Result<()> {
+    let cwd = std::env::current_dir().context("unable to resolve current directory")?;
+    let paths = ConfigPaths::resolve_from(&cwd)?;
+    let request = build_query_request(args)?;
+    let storage = load_storage(&paths)?;
+    let spec = resolve_query_spec(&request, &storage)?;
+    let executor = MongoExecutor::new();
+    let runtime = tokio::runtime::Runtime::new().context("unable to start async runtime")?;
+    let documents = runtime.block_on(executor.execute_query(&storage.config, &spec))?;
+    print_documents(request.output, &documents)
+}
+
+fn run_agg(args: AggArgs) -> Result<()> {
+    let cwd = std::env::current_dir().context("unable to resolve current directory")?;
+    let paths = ConfigPaths::resolve_from(&cwd)?;
+    let request = build_agg_request(args)?;
+    let storage = load_storage(&paths)?;
+    let spec = resolve_aggregation_spec(&request, &storage)?;
+    let executor = MongoExecutor::new();
+    let runtime = tokio::runtime::Runtime::new().context("unable to start async runtime")?;
+    let documents = runtime.block_on(executor.execute_aggregation(&storage.config, &spec))?;
+    print_documents(request.output, &documents)
+}
+
+fn resolve_query_spec(request: &QueryRequest, storage: &StorageSnapshot) -> Result<QuerySpec> {
     match &request.target {
         QueryTarget::Saved { name } => {
-            println!("- target: saved query '{}'", name);
+            let saved = storage
+                .queries
+                .iter()
+                .find(|query| query.name == *name)
+                .with_context(|| format!("saved query '{name}' not found"))?;
+            Ok(QuerySpec {
+                connection: request
+                    .connection
+                    .clone()
+                    .or_else(|| saved.connection.clone()),
+                database: saved.database.clone(),
+                collection: saved.collection.clone(),
+                filter: saved.filter.clone(),
+                projection: saved.projection.clone(),
+                sort: saved.sort.clone(),
+                limit: saved.limit,
+            })
         }
         QueryTarget::Inline {
             database,
@@ -185,50 +214,156 @@ fn print_query_summary(request: &QueryRequest, paths: &ConfigPaths) {
             projection,
             sort,
             limit,
-        } => {
-            println!("- target: inline {}.{}", database, collection);
-            if let Some(filter) = filter {
-                println!("- filter: {}", filter);
-            }
-            if let Some(projection) = projection {
-                println!("- projection: {}", projection);
-            }
-            if let Some(sort) = sort {
-                println!("- sort: {}", sort);
-            }
-            if let Some(limit) = limit {
-                println!("- limit: {}", limit);
-            }
-        }
+        } => Ok(QuerySpec {
+            connection: request.connection.clone(),
+            database: database.clone(),
+            collection: collection.clone(),
+            filter: filter.clone(),
+            projection: projection.clone(),
+            sort: sort.clone(),
+            limit: *limit,
+        }),
     }
-    print_path_summary(paths);
 }
 
-fn print_agg_summary(request: &AggregationRequest, paths: &ConfigPaths) {
-    println!("lazycompass-cli (stub)");
-    println!("- mode: aggregation");
-    println!("- output: {}", request.output.label());
+fn resolve_aggregation_spec(
+    request: &AggregationRequest,
+    storage: &StorageSnapshot,
+) -> Result<AggregationSpec> {
     match &request.target {
         AggregationTarget::Saved { name } => {
-            println!("- target: saved aggregation '{}'", name);
+            let saved = storage
+                .aggregations
+                .iter()
+                .find(|aggregation| aggregation.name == *name)
+                .with_context(|| format!("saved aggregation '{name}' not found"))?;
+            Ok(AggregationSpec {
+                connection: request
+                    .connection
+                    .clone()
+                    .or_else(|| saved.connection.clone()),
+                database: saved.database.clone(),
+                collection: saved.collection.clone(),
+                pipeline: saved.pipeline.clone(),
+            })
         }
         AggregationTarget::Inline {
             database,
             collection,
             pipeline,
-        } => {
-            println!("- target: inline {}.{}", database, collection);
-            println!("- pipeline: {}", pipeline);
-        }
+        } => Ok(AggregationSpec {
+            connection: request.connection.clone(),
+            database: database.clone(),
+            collection: collection.clone(),
+            pipeline: pipeline.clone(),
+        }),
     }
-    print_path_summary(paths);
 }
 
-fn print_path_summary(paths: &ConfigPaths) {
-    println!("- global config: {}", paths.global_config_path().display());
-    match paths.repo_config_path() {
-        Some(path) => println!("- repo config: {}", path.display()),
-        None => println!("- repo config: (none)"),
+fn print_documents(format: OutputFormat, documents: &[Document]) -> Result<()> {
+    match format {
+        OutputFormat::JsonPretty => {
+            let output = serde_json::to_string_pretty(documents)
+                .context("unable to serialize results as JSON")?;
+            println!("{output}");
+        }
+        OutputFormat::Table => {
+            let output = format_table(documents);
+            println!("{output}");
+        }
+    }
+    Ok(())
+}
+
+fn format_table(documents: &[Document]) -> String {
+    if documents.is_empty() {
+        return "no results".to_string();
+    }
+
+    let mut columns = BTreeSet::new();
+    for document in documents {
+        for (key, value) in document.iter() {
+            if is_scalar(value) {
+                columns.insert(key.to_string());
+            }
+        }
+    }
+
+    if columns.is_empty() {
+        return "no scalar fields to display".to_string();
+    }
+
+    let columns: Vec<String> = columns.into_iter().collect();
+    let mut rows = Vec::with_capacity(documents.len());
+    for document in documents {
+        let mut row = Vec::with_capacity(columns.len());
+        for column in &columns {
+            let cell = match document.get(column) {
+                Some(value) if is_scalar(value) => format_scalar(value),
+                _ => String::new(),
+            };
+            row.push(cell);
+        }
+        rows.push(row);
+    }
+
+    let widths = column_widths(&columns, &rows);
+    let mut output = String::new();
+    output.push_str(&format_row(&columns, &widths));
+    output.push('\n');
+    output.push_str(&format_separator(&widths));
+    for row in rows {
+        output.push('\n');
+        output.push_str(&format_row(&row, &widths));
+    }
+    output
+}
+
+fn column_widths(headers: &[String], rows: &[Vec<String>]) -> Vec<usize> {
+    let mut widths: Vec<usize> = headers.iter().map(|header| header.len()).collect();
+    for row in rows {
+        for (index, cell) in row.iter().enumerate() {
+            if cell.len() > widths[index] {
+                widths[index] = cell.len();
+            }
+        }
+    }
+    widths
+}
+
+fn format_row(cells: &[String], widths: &[usize]) -> String {
+    let mut row = String::new();
+    for (index, cell) in cells.iter().enumerate() {
+        if index > 0 {
+            row.push_str(" | ");
+        }
+        let width = widths[index];
+        row.push_str(&format!("{cell:width$}", width = width));
+    }
+    row
+}
+
+fn format_separator(widths: &[usize]) -> String {
+    let mut line = String::new();
+    for (index, width) in widths.iter().enumerate() {
+        if index > 0 {
+            line.push_str("-+-");
+        }
+        line.push_str(&"-".repeat(*width));
+    }
+    line
+}
+
+fn is_scalar(value: &Bson) -> bool {
+    !matches!(value, Bson::Document(_) | Bson::Array(_))
+}
+
+fn format_scalar(value: &Bson) -> String {
+    match serde_json::to_value(value) {
+        Ok(serde_json::Value::String(value)) => value,
+        Ok(serde_json::Value::Null) => "null".to_string(),
+        Ok(value) => value.to_string(),
+        Err(_) => format!("{value:?}"),
     }
 }
 

@@ -1,8 +1,176 @@
+pub use mongodb::bson::{Bson, Document};
+
+use anyhow::{Context, Result};
+use futures::TryStreamExt;
+use lazycompass_core::{Config, ConnectionSpec};
+use mongodb::{Client, bson, options::FindOptions};
+use serde_json::Value;
+
+#[derive(Debug, Clone)]
+pub struct QuerySpec {
+    pub connection: Option<String>,
+    pub database: String,
+    pub collection: String,
+    pub filter: Option<String>,
+    pub projection: Option<String>,
+    pub sort: Option<String>,
+    pub limit: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AggregationSpec {
+    pub connection: Option<String>,
+    pub database: String,
+    pub collection: String,
+    pub pipeline: String,
+}
+
 #[derive(Debug, Default)]
 pub struct MongoExecutor;
 
 impl MongoExecutor {
     pub fn new() -> Self {
         Self
+    }
+
+    pub fn resolve_connection<'a>(
+        &self,
+        config: &'a Config,
+        name: Option<&str>,
+    ) -> Result<&'a ConnectionSpec> {
+        if config.connections.is_empty() {
+            anyhow::bail!("no connections configured");
+        }
+
+        let name = name.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        });
+
+        if let Some(name) = name {
+            return config
+                .connections
+                .iter()
+                .find(|connection| connection.name == name)
+                .with_context(|| format!("connection '{name}' not found"));
+        }
+
+        if config.connections.len() == 1 {
+            return Ok(&config.connections[0]);
+        }
+
+        anyhow::bail!(
+            "multiple connections configured; specify --connection or set connection in the saved spec"
+        )
+    }
+
+    pub async fn execute_query(&self, config: &Config, spec: &QuerySpec) -> Result<Vec<Document>> {
+        let connection = self.resolve_connection(config, spec.connection.as_deref())?;
+        let client = Client::with_uri_str(&connection.uri)
+            .await
+            .with_context(|| format!("unable to connect to {}", connection.uri))?;
+        let database = client.database(&spec.database);
+        let collection = database.collection::<Document>(&spec.collection);
+
+        let filter = match normalize_json_option(spec.filter.clone()) {
+            Some(value) => parse_json_document("filter", &value)?,
+            None => Document::new(),
+        };
+
+        let projection = normalize_json_option(spec.projection.clone())
+            .map(|value| parse_json_document("projection", &value))
+            .transpose()?;
+        let sort = normalize_json_option(spec.sort.clone())
+            .map(|value| parse_json_document("sort", &value))
+            .transpose()?;
+
+        let mut options = FindOptions::default();
+        options.projection = projection;
+        options.sort = sort;
+        if let Some(limit) = spec.limit {
+            options.limit = Some(limit as i64);
+        }
+
+        let cursor = collection
+            .find(filter)
+            .with_options(options)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to run find on {}.{}",
+                    spec.database, spec.collection
+                )
+            })?;
+        let documents = cursor
+            .try_collect()
+            .await
+            .context("failed to load query results")?;
+        Ok(documents)
+    }
+
+    pub async fn execute_aggregation(
+        &self,
+        config: &Config,
+        spec: &AggregationSpec,
+    ) -> Result<Vec<Document>> {
+        let connection = self.resolve_connection(config, spec.connection.as_deref())?;
+        let client = Client::with_uri_str(&connection.uri)
+            .await
+            .with_context(|| format!("unable to connect to {}", connection.uri))?;
+        let database = client.database(&spec.database);
+        let collection = database.collection::<Document>(&spec.collection);
+
+        let pipeline = parse_json_pipeline(&spec.pipeline)?;
+        let cursor = collection.aggregate(pipeline).await.with_context(|| {
+            format!(
+                "failed to run aggregation on {}.{}",
+                spec.database, spec.collection
+            )
+        })?;
+        let documents = cursor
+            .try_collect()
+            .await
+            .context("failed to load aggregation results")?;
+        Ok(documents)
+    }
+}
+
+fn normalize_json_option(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn parse_json_document(label: &str, value: &str) -> Result<Document> {
+    let json: Value =
+        serde_json::from_str(value).with_context(|| format!("invalid JSON in {label}"))?;
+    let bson = bson::to_bson(&json).with_context(|| format!("invalid JSON in {label}"))?;
+    match bson {
+        Bson::Document(document) => Ok(document),
+        _ => anyhow::bail!("{label} must be a JSON object"),
+    }
+}
+
+fn parse_json_pipeline(value: &str) -> Result<Vec<Document>> {
+    let json: Value = serde_json::from_str(value).context("invalid JSON in pipeline")?;
+    let bson = bson::to_bson(&json).context("invalid JSON in pipeline")?;
+    match bson {
+        Bson::Array(items) => items
+            .into_iter()
+            .map(|item| match item {
+                Bson::Document(document) => Ok(document),
+                _ => anyhow::bail!("pipeline items must be JSON objects"),
+            })
+            .collect(),
+        _ => anyhow::bail!("pipeline must be a JSON array"),
     }
 }

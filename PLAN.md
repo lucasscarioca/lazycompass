@@ -28,6 +28,8 @@ Deliverables:
 
 Goal: Make `lazycompass query/agg` actually execute against MongoDB.
 
+Status: complete (2026-02-04)
+
 Scope:
 - Implement connection resolution by name in `lazycompass-mongo`.
 - Query execution:
