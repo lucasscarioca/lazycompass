@@ -291,4 +291,14 @@ mod tests {
             Duration::from_millis(DEFAULT_QUERY_TIMEOUT_MS)
         );
     }
+
+    #[test]
+    fn read_only_defaults_to_true() {
+        let config = Config::default();
+        assert!(config.read_only());
+
+        let mut config = Config::default();
+        config.read_only = Some(false);
+        assert!(!config.read_only());
+    }
 }

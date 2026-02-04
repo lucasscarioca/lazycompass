@@ -110,7 +110,7 @@ Deliverables:
 
 ### 7.5 CI and Testing
 
-Status: in progress
+Status: complete
 
 Scope:
 - CI gating for fmt/clippy/tests
@@ -122,7 +122,7 @@ Tasks:
 - [x] Add integration tests
   - Use docker-compose playground from `PLAYGROUND.md`
   - Validate connection + query + aggregation flows
-- [ ] Add tests for read-only mode and env interpolation
+- [x] Add tests for read-only mode and env interpolation
 
 Deliverables:
 - CI runs on PRs and main
