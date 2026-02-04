@@ -5,7 +5,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use lazycompass_core::{ConnectionSpec, SavedAggregation, SavedQuery};
+use lazycompass_core::{Config, ConnectionSpec, SavedAggregation, SavedQuery};
 use lazycompass_mongo::{
     Bson, Document, DocumentDeleteSpec, DocumentInsertSpec, DocumentListSpec, DocumentReplaceSpec,
     MongoExecutor, parse_json_document,
@@ -290,6 +290,68 @@ const DOCUMENT_VIEW_HINTS: &[HintGroup] = &[
     },
 ];
 
+#[derive(Debug, Clone, Copy)]
+struct Theme {
+    text: Color,
+    accent: Color,
+    border: Color,
+    selection_fg: Color,
+    selection_bg: Color,
+    warning: Color,
+    error: Color,
+}
+
+impl Theme {
+    fn text_style(self) -> Style {
+        Style::default().fg(self.text)
+    }
+
+    fn title_style(self) -> Style {
+        Style::default()
+            .fg(self.accent)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    fn border_style(self) -> Style {
+        Style::default().fg(self.border)
+    }
+
+    fn selection_style(self) -> Style {
+        Style::default()
+            .fg(self.selection_fg)
+            .bg(self.selection_bg)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    fn warning_style(self) -> Style {
+        Style::default().fg(self.warning)
+    }
+
+    fn error_style(self) -> Style {
+        Style::default().fg(self.error)
+    }
+}
+
+const THEME_CLASSIC: Theme = Theme {
+    text: Color::Gray,
+    accent: Color::Cyan,
+    border: Color::DarkGray,
+    selection_fg: Color::Black,
+    selection_bg: Color::Cyan,
+    warning: Color::Yellow,
+    error: Color::Red,
+};
+
+const THEME_EMBER: Theme = Theme {
+    text: Color::White,
+    accent: Color::LightRed,
+    border: Color::Red,
+    selection_fg: Color::Black,
+    selection_bg: Color::LightRed,
+    warning: Color::LightYellow,
+    error: Color::LightRed,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
     Connections,
@@ -324,6 +386,7 @@ struct App {
     storage: StorageSnapshot,
     executor: MongoExecutor,
     runtime: Runtime,
+    theme: Theme,
     screen: Screen,
     connection_index: Option<usize>,
     database_items: Vec<String>,
@@ -345,7 +408,11 @@ struct App {
 impl App {
     fn new(paths: ConfigPaths, storage: StorageSnapshot) -> Result<Self> {
         let runtime = Runtime::new().context("unable to start async runtime")?;
-        let warnings = VecDeque::from(storage.warnings.clone());
+        let (theme, theme_warning) = resolve_theme(&storage.config);
+        let mut warnings = VecDeque::from(storage.warnings.clone());
+        if let Some(warning) = theme_warning {
+            warnings.push_back(warning);
+        }
         let connection_index = if storage.config.connections.is_empty() {
             None
         } else {
@@ -362,6 +429,7 @@ impl App {
             storage,
             executor: MongoExecutor::new(),
             runtime,
+            theme,
             screen: Screen::Connections,
             connection_index,
             database_items: Vec::new(),
@@ -1145,8 +1213,13 @@ impl App {
             ])
             .split(frame.area());
 
-        let header =
-            Paragraph::new(self.header_lines()).block(Block::default().borders(Borders::BOTTOM));
+        let header = Paragraph::new(self.header_lines())
+            .style(self.theme.text_style())
+            .block(
+                Block::default()
+                    .borders(Borders::BOTTOM)
+                    .border_style(self.theme.border_style()),
+            );
         frame.render_widget(header, layout[0]);
 
         match self.screen {
@@ -1204,7 +1277,16 @@ impl App {
                     .map(|line| Line::from(line.clone()))
                     .collect::<Vec<_>>();
                 let body = Paragraph::new(lines)
-                    .block(Block::default().borders(Borders::ALL).title("Document"))
+                    .style(self.theme.text_style())
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(self.theme.border_style())
+                            .title(Line::from(Span::styled(
+                                "Document",
+                                self.theme.title_style(),
+                            ))),
+                    )
                     .wrap(Wrap { trim: false })
                     .scroll((self.document_scroll, 0));
                 frame.render_widget(body, layout[1]);
@@ -1215,8 +1297,13 @@ impl App {
             self.render_help(frame, layout[1]);
         }
 
-        let footer =
-            Paragraph::new(self.footer_lines()).block(Block::default().borders(Borders::TOP));
+        let footer = Paragraph::new(self.footer_lines())
+            .style(self.theme.text_style())
+            .block(
+                Block::default()
+                    .borders(Borders::TOP)
+                    .border_style(self.theme.border_style()),
+            );
         frame.render_widget(footer, layout[2]);
     }
 
@@ -1228,9 +1315,16 @@ impl App {
         items: &[String],
         selected: Option<usize>,
     ) {
+        let title = Line::from(Span::styled(title.to_string(), self.theme.title_style()));
         if items.is_empty() {
             let placeholder = Paragraph::new("no items")
-                .block(Block::default().borders(Borders::ALL).title(title));
+                .style(self.theme.text_style())
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.theme.border_style())
+                        .title(title),
+                );
             frame.render_widget(placeholder, area);
             return;
         }
@@ -1240,13 +1334,14 @@ impl App {
             .map(|item| ListItem::new(item.clone()))
             .collect::<Vec<_>>();
         let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title(title))
-            .highlight_style(
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
+            .style(self.theme.text_style())
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(self.theme.border_style())
+                    .title(title),
             )
+            .highlight_style(self.theme.selection_style())
             .highlight_symbol("> ");
         let mut state = ListState::default();
         state.select(selected);
@@ -1257,7 +1352,13 @@ impl App {
         let help_area = centered_rect(70, 70, area);
         frame.render_widget(Clear, help_area);
         let help = Paragraph::new(self.help_lines())
-            .block(Block::default().borders(Borders::ALL).title("Help"))
+            .style(self.theme.text_style())
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(self.theme.border_style())
+                    .title(Line::from(Span::styled("Help", self.theme.title_style()))),
+            )
             .wrap(Wrap { trim: false });
         frame.render_widget(help, help_area);
     }
@@ -1298,11 +1399,8 @@ impl App {
         let path = format!("Conn: {connection}  Db: {database}  Coll: {collection}");
 
         vec![
-            Line::from(Span::styled(
-                title.to_string(),
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Line::from(path),
+            Line::from(Span::styled(title.to_string(), self.theme.title_style())),
+            Line::from(Span::styled(path, self.theme.text_style())),
         ]
     }
 
@@ -1313,23 +1411,20 @@ impl App {
             vec![
                 Line::from(Span::styled(
                     confirm.prompt.clone(),
-                    Style::default().fg(Color::Yellow),
+                    self.theme.warning_style(),
                 )),
                 Line::from("y confirm  n cancel"),
             ]
         } else if let Some(message) = &self.message {
             vec![
-                Line::from(Span::styled(
-                    message.clone(),
-                    Style::default().fg(Color::Red),
-                )),
+                Line::from(Span::styled(message.clone(), self.theme.error_style())),
                 Line::from(hint),
             ]
         } else if let Some(warning) = &self.warnings.front() {
             vec![
                 Line::from(Span::styled(
                     format!("warning: {warning}"),
-                    Style::default().fg(Color::Yellow),
+                    self.theme.warning_style(),
                 )),
                 Line::from(hint),
             ]
@@ -1388,6 +1483,25 @@ fn keys_for_actions(actions: &[KeyAction]) -> String {
         keys.extend_from_slice(action_keys(*action));
     }
     keys.join("/")
+}
+
+fn resolve_theme(config: &Config) -> (Theme, Option<String>) {
+    let name = config.theme.name.as_deref().unwrap_or("classic");
+    match theme_by_name(name) {
+        Some(theme) => (theme, None),
+        None => (
+            THEME_CLASSIC,
+            Some(format!("unknown theme '{name}', using classic")),
+        ),
+    }
+}
+
+fn theme_by_name(name: &str) -> Option<Theme> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "classic" | "default" => Some(THEME_CLASSIC),
+        "ember" => Some(THEME_EMBER),
+        _ => None,
+    }
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {

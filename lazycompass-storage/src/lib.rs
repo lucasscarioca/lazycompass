@@ -225,7 +225,13 @@ fn merge_config(global: Config, repo: Config) -> Config {
         }
     }
 
-    Config { connections }
+    let theme = if repo.theme.name.is_some() {
+        repo.theme
+    } else {
+        global.theme
+    };
+
+    Config { connections, theme }
 }
 
 fn normalize_saved_name(name: &str) -> Result<String> {
@@ -360,6 +366,9 @@ default_database = "global_db"
 [[connections]]
 name = "global_only"
 uri = "mongodb://global_only"
+
+[theme]
+name = "classic"
 "#,
         );
         write_file(
@@ -372,6 +381,9 @@ default_database = "repo_db"
 [[connections]]
 name = "repo_only"
 uri = "mongodb://repo_only"
+
+[theme]
+name = "ember"
 "#,
         );
 
@@ -398,6 +410,7 @@ uri = "mongodb://repo_only"
         );
         assert!(connections.contains_key("global_only"));
         assert!(connections.contains_key("repo_only"));
+        assert_eq!(config.theme.name.as_deref(), Some("ember"));
 
         let _ = fs::remove_dir_all(&root);
         Ok(())

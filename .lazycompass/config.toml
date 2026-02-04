@@ -2,3 +2,6 @@
 name = "local"
 uri = "mongodb://localhost:27017"
 default_database = "lazycompass"
+
+[theme]
+name = "ember"

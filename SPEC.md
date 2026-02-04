@@ -89,7 +89,26 @@ CLI/TUI -> core models -> storage (read config/specs) -> mongo (execute) -> outp
   queries/
   aggregations/
 
-### 8.3 Query and Aggregation Files (TOML)
+### 8.3 Config File (TOML)
+
+Example:
+
+```
+[[connections]]
+name = "local"
+uri = "mongodb://localhost:27017"
+default_database = "lazycompass"
+
+[theme]
+name = "classic"
+```
+
+Theme notes:
+
+- `theme.name` is optional; defaults to `classic`.
+- Available built-in themes: `classic`, `ember`.
+
+### 8.4 Query and Aggregation Files (TOML)
 
 Queries and aggregations are stored as one-file-per-definition for easy review and git diffs.
 
