@@ -51,3 +51,9 @@ cargo run -p lazycompass
 ```
 
 Keys (Documents screen): `i` insert, `e` edit, `d` delete, `Q` save query, `A` save aggregation.
+
+## Integration tests
+
+```bash
+LAZYCOMPASS_PLAYGROUND=1 cargo test -p lazycompass-mongo --test playground
+```

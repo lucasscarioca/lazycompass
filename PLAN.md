@@ -119,7 +119,7 @@ Scope:
 Tasks:
 - [x] Add CI workflow
   - Run `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`, `cargo test --workspace`
-- [ ] Add integration tests
+- [x] Add integration tests
   - Use docker-compose playground from `PLAYGROUND.md`
   - Validate connection + query + aggregation flows
 - [ ] Add tests for read-only mode and env interpolation
