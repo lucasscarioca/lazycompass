@@ -213,4 +213,4 @@ Follow Rust 2024 edition idioms and keep changes minimal and consistent.
 - Do not delete or rewrite existing user changes without approval
 - Avoid destructive git commands
 - Keep `.lazycompass/` contents in sync with sample data
-- When the user requests a commit, create it after finishing the relevant work
+- Proactively commit after finishing relevant work
