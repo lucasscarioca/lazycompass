@@ -20,7 +20,7 @@ explicit safety guardrails, and operational readiness.
 
 ### 7.1 Security and Secrets
 
-Status: in progress
+Status: complete
 
 Scope:
 - Support MongoDB URI features used in production (TLS/SRV/auth options)
@@ -34,7 +34,7 @@ Tasks:
 - [x] Introduce explicit redaction for connection URIs
   - Mask password/credentials in logs and error messages
   - Keep redaction consistent for TUI + CLI paths
-- [ ] Document secret handling rules in `SPEC.md`
+- [x] Document secret handling rules in `SPEC.md`
 
 Deliverables:
 - Config can safely reference `${MONGO_URI}`

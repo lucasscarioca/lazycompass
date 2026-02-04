@@ -22,8 +22,11 @@ Build a fast, ergonomic, and collaborative MongoDB TUI that:
 - Provide a vim-like navigation and interaction model
 - Offer an efficient UI for browsing and editing databases, collections, and documents
 - Support read/write operations, aggregations, and schema exploration
+- Support secure production connections (TLS/SRV/auth) and safe-by-default operations
 - Persist queries and aggregations in git-friendly TOML files
 - Provide a fast CLI for running saved or inline queries/aggregations
+- Provide reliable, observable behavior (structured logs, clear errors, exit codes)
+- Keep config formats stable with backward-compatible changes and migration notes
 - Maintain a clean, modular Rust workspace aligned with the Yazi stack
 
 ## 4. Non-Goals (Initial)
@@ -72,6 +75,7 @@ CLI/TUI -> core models -> storage (read config/specs) -> mongo (execute) -> outp
 - Global: ~/.config/lazycompass
 - Repo: <repo>/.lazycompass
 - Repo overrides global, with fallback to global
+- Repo config must be safe to commit; keep secrets in global config or env vars
 
 ## 8. Persistence and File Layout
 
@@ -111,6 +115,13 @@ Theme notes:
 
 - `theme.name` is optional; defaults to `classic`.
 - Available built-in themes: `classic`, `ember`.
+
+Connection notes:
+
+- MongoDB connection URIs must support TLS/SRV/auth options used in production.
+- Prefer keeping credentials in global config or env vars, not repo config.
+- Support env var interpolation in config values (example: `${MONGO_URI}`).
+- Redact connection URIs in logs and errors by masking credentials as `***`.
 
 Logging notes:
 
@@ -163,6 +174,7 @@ filter = "{ \"_id\": { \"$oid\": \"64e1f2b4c2a3e02c9a0a9c10\" } }"
 - Run inline query/aggregation without saving
 - Default output is pretty JSON
 - Optional `--table` flag for table output
+- Support a read-only mode that blocks write operations
 
 Example commands:
 
@@ -182,6 +194,7 @@ lazycompass agg --db app --collection users --pipeline '[{"$match": {"active": t
 - Document view with basic edit and delete
 - Query/aggregation editor panel
 - Vim-like navigation and key bindings
+- Read-only mode that disables writes and highlights safety status
 
 ## 11. UX Principles
 
@@ -190,8 +203,41 @@ lazycompass agg --db app --collection users --pipeline '[{"$match": {"active": t
 - Clear feedback for actions and errors
 - Consistent keymap across views
 - Provide inline key hints and a help overlay (`?` to open, `Esc` to close)
+- Safety-first UX for destructive actions (explicit confirmation + context)
 
-## 12. Implementation Phases
+## 12. Production Readiness Requirements
+
+### 12.1 Security and Secrets
+
+- Support TLS/SRV/auth via MongoDB URIs
+- Allow env var interpolation for config values
+- Never log secrets (redact credentials and tokens)
+- Prefer global config for credentials; repo config must remain secret-free
+
+### 12.2 Safety and Guardrails
+
+- Default to read-only unless explicitly enabled
+- Destructive actions require explicit confirmation with clear context
+- Provide safe previews for write operations where possible
+
+### 12.3 Reliability and Performance
+
+- Configurable timeouts for connect and query operations
+- Clear handling for transient errors and network disconnects
+- Non-blocking UI interactions with visible loading/error states
+
+### 12.4 Observability and Operations
+
+- Structured logs with component and command fields
+- Consistent CLI exit codes for automation
+- Log file rotation or size limits
+
+### 12.5 Release and Compatibility
+
+- Semantic versioning for user-facing changes
+- Config schema versioning with migration notes
+
+## 13. Implementation Phases
 
 ### Phase 1: Workspace and Core
 
@@ -230,15 +276,26 @@ Status: complete (2026-02-04)
 - Configurable themes
 - Logging and telemetry (local)
 
-## 13. Testing and Quality
+### Phase 7: Production Readiness
+
+Status: planned
+
+- Secure connection support (TLS/SRV/auth) + secret handling
+- Read-only mode and safer write workflows
+- Operational observability (structured logs, exit codes, rotation)
+- Reliability improvements (timeouts, retry guidance)
+- CI gating (fmt/clippy/test) and release checklist
+
+## 14. Testing and Quality
 
 - Unit tests for parsing and validation
 - Integration tests for persistence resolution
 - Basic CLI tests for command parsing
 - Added tests for keymap validation, theme selection, and log path resolution
-- CI later (future work)
+- CI must run fmt, clippy, and full test suite
+- Integration tests against the Docker MongoDB playground
 
-## 14. References
+## 15. References
 
 - Yazi (Rust TUI inspiration): https://github.com/sxyazi/yazi
 - Mongotui (Go TUI reference): https://github.com/kreulenk/mongotui
