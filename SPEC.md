@@ -119,6 +119,13 @@ notes = "Signup counts by day"
 ```
 
 The filter/projection/sort/pipeline values are JSON strings for compatibility with MongoDB syntax and easy copy/paste.
+These strings accept MongoDB Extended JSON (relaxed or canonical) so BSON types like ObjectId and dates can be represented.
+
+Example (Extended JSON ObjectId):
+
+```
+filter = "{ \"_id\": { \"$oid\": \"64e1f2b4c2a3e02c9a0a9c10\" } }"
+```
 
 ## 9. CLI Requirements
 

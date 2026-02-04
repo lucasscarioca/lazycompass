@@ -101,6 +101,35 @@ fn build_query_request(args: QueryArgs) -> Result<QueryRequest> {
         OutputFormat::JsonPretty
     };
 
+    if let Some(name) = &args.name {
+        let mut conflicts = Vec::new();
+        if args.db.is_some() {
+            conflicts.push("--db");
+        }
+        if args.collection.is_some() {
+            conflicts.push("--collection");
+        }
+        if args.filter.is_some() {
+            conflicts.push("--filter");
+        }
+        if args.projection.is_some() {
+            conflicts.push("--projection");
+        }
+        if args.sort.is_some() {
+            conflicts.push("--sort");
+        }
+        if args.limit.is_some() {
+            conflicts.push("--limit");
+        }
+        if !conflicts.is_empty() {
+            anyhow::bail!(
+                "saved query '{}' cannot be combined with {}",
+                name,
+                conflicts.join(", ")
+            );
+        }
+    }
+
     let target = if let Some(name) = args.name {
         QueryTarget::Saved { name }
     } else {
@@ -135,6 +164,26 @@ fn build_agg_request(args: AggArgs) -> Result<AggregationRequest> {
         OutputFormat::JsonPretty
     };
 
+    if let Some(name) = &args.name {
+        let mut conflicts = Vec::new();
+        if args.db.is_some() {
+            conflicts.push("--db");
+        }
+        if args.collection.is_some() {
+            conflicts.push("--collection");
+        }
+        if args.pipeline.is_some() {
+            conflicts.push("--pipeline");
+        }
+        if !conflicts.is_empty() {
+            anyhow::bail!(
+                "saved aggregation '{}' cannot be combined with {}",
+                name,
+                conflicts.join(", ")
+            );
+        }
+    }
+
     let target = if let Some(name) = args.name {
         AggregationTarget::Saved { name }
     } else {
@@ -167,6 +216,7 @@ fn run_query(args: QueryArgs) -> Result<()> {
     let paths = ConfigPaths::resolve_from(&cwd)?;
     let request = build_query_request(args)?;
     let storage = load_storage(&paths)?;
+    report_warnings(&storage);
     let spec = resolve_query_spec(&request, &storage)?;
     let executor = MongoExecutor::new();
     let runtime = tokio::runtime::Runtime::new().context("unable to start async runtime")?;
@@ -179,11 +229,18 @@ fn run_agg(args: AggArgs) -> Result<()> {
     let paths = ConfigPaths::resolve_from(&cwd)?;
     let request = build_agg_request(args)?;
     let storage = load_storage(&paths)?;
+    report_warnings(&storage);
     let spec = resolve_aggregation_spec(&request, &storage)?;
     let executor = MongoExecutor::new();
     let runtime = tokio::runtime::Runtime::new().context("unable to start async runtime")?;
     let documents = runtime.block_on(executor.execute_aggregation(&storage.config, &spec))?;
     print_documents(request.output, &documents)
+}
+
+fn report_warnings(storage: &StorageSnapshot) {
+    for warning in &storage.warnings {
+        eprintln!("warning: {warning}");
+    }
 }
 
 fn resolve_query_spec(request: &QueryRequest, storage: &StorageSnapshot) -> Result<QuerySpec> {
@@ -412,4 +469,40 @@ fn run_upgrade(args: UpgradeArgs) -> Result<()> {
         anyhow::bail!("installer exited with non-zero status");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_query_request_rejects_inline_with_name() {
+        let args = QueryArgs {
+            name: Some("saved".to_string()),
+            connection: None,
+            db: Some("lazycompass".to_string()),
+            collection: None,
+            filter: None,
+            projection: None,
+            sort: None,
+            limit: None,
+            table: false,
+        };
+
+        assert!(build_query_request(args).is_err());
+    }
+
+    #[test]
+    fn build_agg_request_rejects_inline_with_name() {
+        let args = AggArgs {
+            name: Some("saved".to_string()),
+            connection: None,
+            db: None,
+            collection: Some("orders".to_string()),
+            pipeline: None,
+            table: false,
+        };
+
+        assert!(build_agg_request(args).is_err());
+    }
 }

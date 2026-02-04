@@ -62,13 +62,20 @@ pub struct StorageSnapshot {
     pub config: Config,
     pub queries: Vec<SavedQuery>,
     pub aggregations: Vec<SavedAggregation>,
+    pub warnings: Vec<String>,
 }
 
 pub fn load_storage(paths: &ConfigPaths) -> Result<StorageSnapshot> {
+    let config = load_config(paths)?;
+    let (queries, query_warnings) = load_saved_queries(paths)?;
+    let (aggregations, aggregation_warnings) = load_saved_aggregations(paths)?;
+    let mut warnings = query_warnings;
+    warnings.extend(aggregation_warnings);
     Ok(StorageSnapshot {
-        config: load_config(paths)?,
-        queries: load_saved_queries(paths)?,
-        aggregations: load_saved_aggregations(paths)?,
+        config,
+        queries,
+        aggregations,
+        warnings,
     })
 }
 
@@ -82,17 +89,19 @@ pub fn load_config(paths: &ConfigPaths) -> Result<Config> {
     Ok(merge_config(global, repo))
 }
 
-pub fn load_saved_queries(paths: &ConfigPaths) -> Result<Vec<SavedQuery>> {
+pub fn load_saved_queries(paths: &ConfigPaths) -> Result<(Vec<SavedQuery>, Vec<String>)> {
     let Some(dir) = paths.repo_queries_dir() else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     };
 
     load_queries_from_dir(&dir)
 }
 
-pub fn load_saved_aggregations(paths: &ConfigPaths) -> Result<Vec<SavedAggregation>> {
+pub fn load_saved_aggregations(
+    paths: &ConfigPaths,
+) -> Result<(Vec<SavedAggregation>, Vec<String>)> {
     let Some(dir) = paths.repo_aggregations_dir() else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     };
 
     load_aggregations_from_dir(&dir)
@@ -188,12 +197,16 @@ fn read_config(path: &Path) -> Result<Config> {
 }
 
 fn validate_config(config: &Config) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
     for (index, connection) in config.connections.iter().enumerate() {
         if connection.name.trim().is_empty() {
             anyhow::bail!("connection at index {} has empty name", index);
         }
         if connection.uri.trim().is_empty() {
             anyhow::bail!("connection '{}' has empty uri", connection.name);
+        }
+        if !seen.insert(connection.name.clone()) {
+            anyhow::bail!("duplicate connection name '{}'", connection.name);
         }
     }
     Ok(())
@@ -226,40 +239,62 @@ fn normalize_saved_name(name: &str) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
-fn load_queries_from_dir(dir: &Path) -> Result<Vec<SavedQuery>> {
+fn load_queries_from_dir(dir: &Path) -> Result<(Vec<SavedQuery>, Vec<String>)> {
     let paths = collect_toml_paths(dir)?;
     let mut queries = Vec::with_capacity(paths.len());
+    let mut warnings = Vec::new();
 
     for path in paths {
-        let contents = fs::read_to_string(&path)
-            .with_context(|| format!("unable to read saved query file {}", path.display()))?;
-        let query: SavedQuery = toml::from_str(&contents)
-            .with_context(|| format!("invalid TOML in saved query {}", path.display()))?;
-        query
-            .validate()
-            .with_context(|| format!("invalid saved query {}", path.display()))?;
-        queries.push(query);
+        let result = (|| -> Result<SavedQuery> {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("unable to read saved query file {}", path.display()))?;
+            let query: SavedQuery = toml::from_str(&contents)
+                .with_context(|| format!("invalid TOML in saved query {}", path.display()))?;
+            query
+                .validate()
+                .with_context(|| format!("invalid saved query {}", path.display()))?;
+            Ok(query)
+        })();
+
+        match result {
+            Ok(query) => queries.push(query),
+            Err(error) => {
+                warnings.push(format!("skipping saved query {}: {error}", path.display()))
+            }
+        }
     }
 
-    Ok(queries)
+    Ok((queries, warnings))
 }
 
-fn load_aggregations_from_dir(dir: &Path) -> Result<Vec<SavedAggregation>> {
+fn load_aggregations_from_dir(dir: &Path) -> Result<(Vec<SavedAggregation>, Vec<String>)> {
     let paths = collect_toml_paths(dir)?;
     let mut aggregations = Vec::with_capacity(paths.len());
+    let mut warnings = Vec::new();
 
     for path in paths {
-        let contents = fs::read_to_string(&path)
-            .with_context(|| format!("unable to read saved aggregation file {}", path.display()))?;
-        let aggregation: SavedAggregation = toml::from_str(&contents)
-            .with_context(|| format!("invalid TOML in saved aggregation {}", path.display()))?;
-        aggregation
-            .validate()
-            .with_context(|| format!("invalid saved aggregation {}", path.display()))?;
-        aggregations.push(aggregation);
+        let result = (|| -> Result<SavedAggregation> {
+            let contents = fs::read_to_string(&path).with_context(|| {
+                format!("unable to read saved aggregation file {}", path.display())
+            })?;
+            let aggregation: SavedAggregation = toml::from_str(&contents)
+                .with_context(|| format!("invalid TOML in saved aggregation {}", path.display()))?;
+            aggregation
+                .validate()
+                .with_context(|| format!("invalid saved aggregation {}", path.display()))?;
+            Ok(aggregation)
+        })();
+
+        match result {
+            Ok(aggregation) => aggregations.push(aggregation),
+            Err(error) => warnings.push(format!(
+                "skipping saved aggregation {}: {error}",
+                path.display()
+            )),
+        }
     }
 
-    Ok(aggregations)
+    Ok((aggregations, warnings))
 }
 
 fn collect_toml_paths(dir: &Path) -> Result<Vec<PathBuf>> {
@@ -396,13 +431,76 @@ pipeline = "[ { \"$group\": { \"_id\": \"$userId\" } } ]"
             global_root: root.join("global"),
             repo_root: Some(repo_root),
         };
-        let queries = load_saved_queries(&paths)?;
-        let aggregations = load_saved_aggregations(&paths)?;
+        let (queries, query_warnings) = load_saved_queries(&paths)?;
+        let (aggregations, aggregation_warnings) = load_saved_aggregations(&paths)?;
 
+        assert!(query_warnings.is_empty());
+        assert!(aggregation_warnings.is_empty());
         assert_eq!(queries.len(), 1);
         assert_eq!(queries[0].name, "active_users");
         assert_eq!(aggregations.len(), 1);
         assert_eq!(aggregations[0].name, "orders_by_user");
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn load_saved_specs_skips_invalid_files() -> Result<()> {
+        let root = temp_root("saved_specs_invalid");
+        let repo_root = root.join("repo");
+
+        write_file(
+            &repo_root.join(".lazycompass/queries/valid.toml"),
+            r#"name = "valid"
+database = "lazycompass"
+collection = "users"
+"#,
+        );
+        write_file(
+            &repo_root.join(".lazycompass/queries/invalid.toml"),
+            r#"name = "invalid"
+collection = "users"
+"#,
+        );
+
+        let paths = ConfigPaths {
+            global_root: root.join("global"),
+            repo_root: Some(repo_root),
+        };
+        let (queries, warnings) = load_saved_queries(&paths)?;
+
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].name, "valid");
+        assert_eq!(warnings.len(), 1);
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn load_config_rejects_duplicate_connections() -> Result<()> {
+        let root = temp_root("config_dupes");
+        let global_root = root.join("global");
+
+        write_file(
+            &global_root.join("config.toml"),
+            r#"[[connections]]
+name = "shared"
+uri = "mongodb://one"
+
+[[connections]]
+name = "shared"
+uri = "mongodb://two"
+"#,
+        );
+
+        let paths = ConfigPaths {
+            global_root,
+            repo_root: None,
+        };
+
+        assert!(load_config(&paths).is_err());
 
         let _ = fs::remove_dir_all(&root);
         Ok(())

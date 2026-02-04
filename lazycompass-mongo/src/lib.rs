@@ -335,7 +335,7 @@ fn normalize_json_option(value: Option<String>) -> Option<String> {
 pub fn parse_json_document(label: &str, value: &str) -> Result<Document> {
     let json: Value =
         serde_json::from_str(value).with_context(|| format!("invalid JSON in {label}"))?;
-    let bson = bson::to_bson(&json).with_context(|| format!("invalid JSON in {label}"))?;
+    let bson = Bson::try_from(json).with_context(|| format!("invalid JSON in {label}"))?;
     match bson {
         Bson::Document(document) => Ok(document),
         _ => anyhow::bail!("{label} must be a JSON object"),
@@ -344,7 +344,7 @@ pub fn parse_json_document(label: &str, value: &str) -> Result<Document> {
 
 fn parse_json_pipeline(value: &str) -> Result<Vec<Document>> {
     let json: Value = serde_json::from_str(value).context("invalid JSON in pipeline")?;
-    let bson = bson::to_bson(&json).context("invalid JSON in pipeline")?;
+    let bson = Bson::try_from(json).context("invalid JSON in pipeline")?;
     match bson {
         Bson::Array(items) => items
             .into_iter()
@@ -354,5 +354,38 @@ fn parse_json_pipeline(value: &str) -> Result<Vec<Document>> {
             })
             .collect(),
         _ => anyhow::bail!("pipeline must be a JSON array"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mongodb::bson::oid::ObjectId;
+
+    #[test]
+    fn parse_json_document_supports_extjson_oid() {
+        let oid = ObjectId::new();
+        let value = format!(r#"{{ "_id": {{ "$oid": "{}" }}, "name": "sample" }}"#, oid);
+        let doc = parse_json_document("filter", &value).expect("parse extjson");
+        match doc.get("_id") {
+            Some(Bson::ObjectId(parsed)) => assert_eq!(parsed, &oid),
+            other => panic!("unexpected _id value: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_json_pipeline_supports_extjson_oid() {
+        let oid = ObjectId::new();
+        let value = format!(r#"[{{ "$match": {{ "_id": {{ "$oid": "{}" }} }} }}]"#, oid);
+        let pipeline = parse_json_pipeline(&value).expect("parse pipeline");
+        let match_stage = pipeline.first().expect("first stage");
+        let filter = match_stage.get("$match").expect("match stage");
+        match filter {
+            Bson::Document(doc) => match doc.get("_id") {
+                Some(Bson::ObjectId(parsed)) => assert_eq!(parsed, &oid),
+                other => panic!("unexpected _id value: {other:?}"),
+            },
+            other => panic!("unexpected match stage: {other:?}"),
+        }
     }
 }

@@ -20,6 +20,7 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
+use std::collections::VecDeque;
 use std::fs;
 use std::io::{Stdout, stdout};
 use std::path::{Path, PathBuf};
@@ -77,11 +78,13 @@ struct App {
     last_g: bool,
     message: Option<String>,
     confirm: Option<ConfirmState>,
+    warnings: VecDeque<String>,
 }
 
 impl App {
     fn new(paths: ConfigPaths, storage: StorageSnapshot) -> Result<Self> {
         let runtime = Runtime::new().context("unable to start async runtime")?;
+        let warnings = VecDeque::from(storage.warnings.clone());
         let connection_index = if storage.config.connections.is_empty() {
             None
         } else {
@@ -112,6 +115,7 @@ impl App {
             last_g: false,
             message,
             confirm: None,
+            warnings,
         })
     }
 
@@ -137,6 +141,10 @@ impl App {
     ) -> Result<bool> {
         if self.confirm.is_some() {
             return self.handle_confirm_key(key, terminal);
+        }
+
+        if !self.warnings.is_empty() {
+            self.warnings.pop_front();
         }
 
         if key.code == KeyCode::Char('q') {
@@ -1000,6 +1008,14 @@ impl App {
                 Line::from(Span::styled(
                     message.clone(),
                     Style::default().fg(Color::Red),
+                )),
+                Line::from(hint.to_string()),
+            ]
+        } else if let Some(warning) = &self.warnings.front() {
+            vec![
+                Line::from(Span::styled(
+                    format!("warning: {warning}"),
+                    Style::default().fg(Color::Yellow),
                 )),
                 Line::from(hint.to_string()),
             ]
