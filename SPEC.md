@@ -1,6 +1,6 @@
 # LazyCompass Specification
 
-Last updated: 2026-02-03
+Last updated: 2026-02-04
 
 ## 1. Overview
 
@@ -189,6 +189,7 @@ lazycompass agg --db app --collection users --pipeline '[{"$match": {"active": t
 - Fast and responsive interactions
 - Clear feedback for actions and errors
 - Consistent keymap across views
+- Provide inline key hints and a help overlay (`?` to open, `Esc` to close)
 
 ## 12. Implementation Phases
 
@@ -223,6 +224,8 @@ lazycompass agg --db app --collection users --pipeline '[{"$match": {"active": t
 
 ### Phase 6: Polish
 
+Status: complete (2026-02-04)
+
 - Keymap refinement
 - Configurable themes
 - Logging and telemetry (local)
@@ -232,6 +235,7 @@ lazycompass agg --db app --collection users --pipeline '[{"$match": {"active": t
 - Unit tests for parsing and validation
 - Integration tests for persistence resolution
 - Basic CLI tests for command parsing
+- Added tests for keymap validation, theme selection, and log path resolution
 - CI later (future work)
 
 ## 14. References
