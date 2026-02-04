@@ -25,6 +25,15 @@ pub struct AggregationSpec {
     pub pipeline: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct DocumentListSpec {
+    pub connection: Option<String>,
+    pub database: String,
+    pub collection: String,
+    pub skip: u64,
+    pub limit: u64,
+}
+
 #[derive(Debug, Default)]
 pub struct MongoExecutor;
 
@@ -135,6 +144,73 @@ impl MongoExecutor {
             .try_collect()
             .await
             .context("failed to load aggregation results")?;
+        Ok(documents)
+    }
+
+    pub async fn list_databases(
+        &self,
+        config: &Config,
+        connection: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let connection = self.resolve_connection(config, connection)?;
+        let client = Client::with_uri_str(&connection.uri)
+            .await
+            .with_context(|| format!("unable to connect to {}", connection.uri))?;
+        let databases = client
+            .list_database_names()
+            .await
+            .context("failed to list databases")?;
+        Ok(databases)
+    }
+
+    pub async fn list_collections(
+        &self,
+        config: &Config,
+        connection: Option<&str>,
+        database: &str,
+    ) -> Result<Vec<String>> {
+        let connection = self.resolve_connection(config, connection)?;
+        let client = Client::with_uri_str(&connection.uri)
+            .await
+            .with_context(|| format!("unable to connect to {}", connection.uri))?;
+        let database = client.database(database);
+        let collections = database
+            .list_collection_names()
+            .await
+            .context("failed to list collections")?;
+        Ok(collections)
+    }
+
+    pub async fn list_documents(
+        &self,
+        config: &Config,
+        spec: &DocumentListSpec,
+    ) -> Result<Vec<Document>> {
+        let connection = self.resolve_connection(config, spec.connection.as_deref())?;
+        let client = Client::with_uri_str(&connection.uri)
+            .await
+            .with_context(|| format!("unable to connect to {}", connection.uri))?;
+        let database = client.database(&spec.database);
+        let collection = database.collection::<Document>(&spec.collection);
+
+        let mut options = FindOptions::default();
+        options.skip = Some(spec.skip);
+        options.limit = Some(spec.limit as i64);
+
+        let cursor = collection
+            .find(Document::new())
+            .with_options(options)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to load documents from {}.{}",
+                    spec.database, spec.collection
+                )
+            })?;
+        let documents = cursor
+            .try_collect()
+            .await
+            .context("failed to load documents")?;
         Ok(documents)
     }
 }

@@ -51,6 +51,8 @@ Deliverables:
 
 Goal: Provide a working, read-only TUI flow.
 
+Status: complete (2026-02-04)
+
 Scope:
 - TUI application shell using ratatui + crossterm.
 - State machine:
