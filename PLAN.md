@@ -66,7 +66,7 @@ Deliverables:
 
 ### 7.3 Reliability and Performance
 
-Status: in progress
+Status: complete
 
 Scope:
 - Add timeouts for network operations
@@ -78,7 +78,7 @@ Tasks:
   - Ensure timeouts are applied in mongo executor
 - [x] Provide retry guidance or automatic retry for safe operations
   - Document behavior and limits
-- [ ] Improve error surfaces
+- [x] Improve error surfaces
   - CLI: clear error messages + exit codes
   - TUI: visible status and non-blocking UI
 

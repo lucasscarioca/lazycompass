@@ -82,7 +82,14 @@ struct UpgradeArgs {
     no_modify_path: bool,
 }
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(error) = run() {
+        report_error(&error);
+        std::process::exit(exit_code(&error));
+    }
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -107,6 +114,34 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn report_error(error: &anyhow::Error) {
+    eprintln!("error: {error}");
+    for cause in error.chain().skip(1) {
+        eprintln!("caused by: {cause}");
+    }
+}
+
+const EXIT_ERROR: i32 = 1;
+const EXIT_CONFIG: i32 = 2;
+
+fn exit_code(error: &anyhow::Error) -> i32 {
+    if error_chain_has::<std::io::Error>(error) || config_message_matches(error) {
+        return EXIT_CONFIG;
+    }
+    EXIT_ERROR
+}
+
+fn config_message_matches(error: &anyhow::Error) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("config") || message.contains("toml")
+}
+
+fn error_chain_has<T: std::error::Error + 'static>(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.downcast_ref::<T>().is_some())
 }
 
 fn build_query_request(args: QueryArgs) -> Result<QueryRequest> {
