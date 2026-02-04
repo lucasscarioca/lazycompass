@@ -2,7 +2,7 @@
 
 This plan focuses on Phase 7 (Production Readiness) from `SPEC.md`.
 
-Status: complete (2026-02-04)
+Status: in progress (2026-02-04)
 
 ## Phase 7 — Production Readiness
 
@@ -17,6 +17,12 @@ explicit safety guardrails, and operational readiness.
 4) CI gating + integration testing against the MongoDB playground
 
 ## Workstreams and Tasks
+
+## Progress Update (2026-02-04)
+
+- Added URI redaction for error output in CLI/TUI
+- Added retry guidance for network errors in CLI/TUI
+- CI now starts MongoDB playground and runs integration tests
 
 ### 7.1 Security and Secrets
 
@@ -81,6 +87,9 @@ Tasks:
 - [x] Improve error surfaces
   - CLI: clear error messages + exit codes
   - TUI: visible status and non-blocking UI
+- [x] Make TUI data loads non-blocking
+  - Move Mongo calls to background tasks
+  - Render loading and error states without freezing UI
 
 Deliverables:
 - Timeouts enforced for connect/query
@@ -162,6 +171,11 @@ Deliverables:
   - Run TUI in read-only mode
   - Attempt insert/edit/delete (should be blocked)
   - Run CLI query/agg
+
+## Next Steps
+
+1) Make TUI data loads non-blocking and add loading states
+2) Validate TUI UX with slow network simulations
 
 ## Documentation Updates
 

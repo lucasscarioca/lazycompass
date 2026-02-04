@@ -5,7 +5,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use lazycompass_core::{Config, ConnectionSpec, SavedAggregation, SavedQuery};
+use lazycompass_core::{Config, ConnectionSpec, SavedAggregation, SavedQuery, redact_uris_in_text};
 use lazycompass_mongo::{
     Bson, Document, DocumentDeleteSpec, DocumentInsertSpec, DocumentListSpec, DocumentReplaceSpec,
     MongoExecutor, parse_json_document,
@@ -25,7 +25,8 @@ use std::fs;
 use std::io::{Stdout, stdout};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 
 const PAGE_SIZE: u64 = 20;
@@ -383,6 +384,45 @@ enum ConfirmAction {
     },
 }
 
+#[derive(Debug, Clone)]
+enum LoadState {
+    Idle,
+    Loading,
+    Failed(String),
+}
+
+#[derive(Debug)]
+enum LoadResult {
+    Databases {
+        id: u64,
+        result: Result<Vec<String>, String>,
+    },
+    Collections {
+        id: u64,
+        result: Result<Vec<String>, String>,
+    },
+    Documents {
+        id: u64,
+        result: Result<Vec<Document>, String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DocumentLoadReason {
+    EnterCollection,
+    NavigateNext,
+    NavigatePrevious,
+    Refresh,
+}
+
+struct ListView<'a> {
+    title: &'a str,
+    items: &'a [String],
+    selected: Option<usize>,
+    load_state: &'a LoadState,
+    loading_label: &'a str,
+}
+
 struct App {
     paths: ConfigPaths,
     storage: StorageSnapshot,
@@ -406,11 +446,23 @@ struct App {
     message: Option<String>,
     confirm: Option<ConfirmState>,
     warnings: VecDeque<String>,
+    load_tx: Sender<LoadResult>,
+    load_rx: Receiver<LoadResult>,
+    next_load_id: u64,
+    database_load_id: Option<u64>,
+    collection_load_id: Option<u64>,
+    document_load_id: Option<u64>,
+    database_state: LoadState,
+    collection_state: LoadState,
+    document_state: LoadState,
+    document_pending_index: Option<usize>,
+    document_load_reason: DocumentLoadReason,
 }
 
 impl App {
     fn new(paths: ConfigPaths, storage: StorageSnapshot) -> Result<Self> {
         let runtime = Runtime::new().context("unable to start async runtime")?;
+        let (load_tx, load_rx) = mpsc::channel();
         let (theme, theme_warning) = resolve_theme(&storage.config);
         let mut warnings = VecDeque::from(storage.warnings.clone());
         if let Some(warning) = theme_warning {
@@ -451,20 +503,143 @@ impl App {
             message,
             confirm: None,
             warnings,
+            load_tx,
+            load_rx,
+            next_load_id: 0,
+            database_load_id: None,
+            collection_load_id: None,
+            document_load_id: None,
+            database_state: LoadState::Idle,
+            collection_state: LoadState::Idle,
+            document_state: LoadState::Idle,
+            document_pending_index: None,
+            document_load_reason: DocumentLoadReason::Refresh,
         })
     }
 
     fn run(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
         loop {
+            self.drain_load_results();
             terminal.draw(|frame| self.draw(frame))?;
-            match event::read()? {
-                Event::Key(key) => {
-                    if self.handle_key(key, terminal)? {
-                        return Ok(());
+            if event::poll(Duration::from_millis(200))? {
+                match event::read()? {
+                    Event::Key(key) => {
+                        if self.handle_key(key, terminal)? {
+                            return Ok(());
+                        }
+                    }
+                    Event::Resize(_, _) => {}
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn drain_load_results(&mut self) {
+        loop {
+            match self.load_rx.try_recv() {
+                Ok(result) => self.apply_load_result(result),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => break,
+            }
+        }
+    }
+
+    fn apply_load_result(&mut self, result: LoadResult) {
+        match result {
+            LoadResult::Databases { id, result } => {
+                if self.database_load_id != Some(id) {
+                    return;
+                }
+                self.database_load_id = None;
+                match result {
+                    Ok(mut databases) => {
+                        databases.sort();
+                        self.database_items = databases;
+                        self.database_index = if self.database_items.is_empty() {
+                            None
+                        } else {
+                            Some(0)
+                        };
+                        self.database_state = LoadState::Idle;
+                    }
+                    Err(error) => {
+                        let message =
+                            format_error_message(&error, is_network_error_message(&error));
+                        self.database_state = LoadState::Failed(message.clone());
+                        self.message = Some(message);
                     }
                 }
-                Event::Resize(_, _) => {}
-                _ => {}
+            }
+            LoadResult::Collections { id, result } => {
+                if self.collection_load_id != Some(id) {
+                    return;
+                }
+                self.collection_load_id = None;
+                match result {
+                    Ok(mut collections) => {
+                        collections.sort();
+                        self.collection_items = collections;
+                        self.collection_index = if self.collection_items.is_empty() {
+                            None
+                        } else {
+                            Some(0)
+                        };
+                        self.collection_state = LoadState::Idle;
+                    }
+                    Err(error) => {
+                        let message =
+                            format_error_message(&error, is_network_error_message(&error));
+                        self.collection_state = LoadState::Failed(message.clone());
+                        self.message = Some(message);
+                    }
+                }
+            }
+            LoadResult::Documents { id, result } => {
+                if self.document_load_id != Some(id) {
+                    return;
+                }
+                self.document_load_id = None;
+                match result {
+                    Ok(documents) => {
+                        self.documents = documents;
+                        if self.documents.is_empty() && self.document_page > 0 {
+                            if self.document_load_reason == DocumentLoadReason::NavigateNext {
+                                self.message = Some("no more documents".to_string());
+                            }
+                            let pending_index = self.document_pending_index.take();
+                            self.document_page -= 1;
+                            let _ = self
+                                .start_load_documents(pending_index, DocumentLoadReason::Refresh);
+                            return;
+                        }
+                        self.document_state = LoadState::Idle;
+                        if let Some(index) = self.document_pending_index.take() {
+                            Self::select_index(
+                                &mut self.document_index,
+                                self.documents.len(),
+                                index,
+                            );
+                        } else if self.documents.is_empty() {
+                            self.document_index = None;
+                        } else {
+                            self.document_index = Some(0);
+                        }
+                        if self.documents.is_empty() {
+                            self.document_lines.clear();
+                            self.document_scroll = 0;
+                        }
+                        if self.screen == Screen::DocumentView {
+                            self.prepare_document_view();
+                        }
+                    }
+                    Err(error) => {
+                        let message =
+                            format_error_message(&error, is_network_error_message(&error));
+                        self.document_state = LoadState::Failed(message.clone());
+                        self.message = Some(message);
+                    }
+                }
             }
         }
     }
@@ -569,7 +744,7 @@ impl App {
                 KeyCode::Enter => {
                     if confirm.input.trim().eq_ignore_ascii_case(required) {
                         if let Err(error) = self.perform_confirm_action(confirm.action) {
-                            self.message = Some(error.to_string());
+                            self.set_error_message(&error);
                         }
                     } else {
                         self.confirm = Some(confirm);
@@ -593,7 +768,7 @@ impl App {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 if let Err(error) = self.perform_confirm_action(confirm.action) {
-                    self.message = Some(error.to_string());
+                    self.set_error_message(&error);
                 }
             }
             KeyCode::Char('n') | KeyCode::Char('q') | KeyCode::Esc => {
@@ -640,6 +815,11 @@ impl App {
         Ok(())
     }
 
+    fn set_error_message(&mut self, error: &anyhow::Error) {
+        let message = format_error_message(&error.to_string(), is_network_error(error));
+        self.message = Some(message);
+    }
+
     fn block_if_read_only(&mut self) -> bool {
         if self.read_only {
             self.message = Some("read-only mode: write operations are disabled".to_string());
@@ -683,7 +863,7 @@ impl App {
         })();
 
         if let Err(error) = result {
-            self.message = Some(error.to_string());
+            self.set_error_message(&error);
         }
         Ok(())
     }
@@ -714,7 +894,7 @@ impl App {
         })();
 
         if let Err(error) = result {
-            self.message = Some(error.to_string());
+            self.set_error_message(&error);
         }
         Ok(())
     }
@@ -761,7 +941,7 @@ impl App {
         })();
 
         if let Err(error) = result {
-            self.message = Some(error.to_string());
+            self.set_error_message(&error);
         }
         Ok(())
     }
@@ -806,7 +986,7 @@ impl App {
         })();
 
         if let Err(error) = result {
-            self.message = Some(error.to_string());
+            self.set_error_message(&error);
         }
         Ok(())
     }
@@ -853,7 +1033,7 @@ impl App {
         })();
 
         if let Err(error) = result {
-            self.message = Some(error.to_string());
+            self.set_error_message(&error);
         }
         Ok(())
     }
@@ -897,17 +1077,7 @@ impl App {
             return Ok(());
         }
         let selected_index = self.document_index;
-        self.load_documents()?;
-        if self.documents.is_empty() && self.document_page > 0 {
-            self.document_page -= 1;
-            self.load_documents()?;
-        }
-        if let Some(index) = selected_index {
-            Self::select_index(&mut self.document_index, self.documents.len(), index);
-        }
-        if self.screen == Screen::DocumentView {
-            self.prepare_document_view();
-        }
+        self.start_load_documents(selected_index, DocumentLoadReason::Refresh)?;
         Ok(())
     }
 
@@ -1054,8 +1224,8 @@ impl App {
         match self.screen {
             Screen::Connections => {
                 if self.connection_index.is_some() {
-                    if let Err(error) = self.load_databases() {
-                        self.message = Some(error.to_string());
+                    if let Err(error) = self.start_load_databases() {
+                        self.set_error_message(&error);
                         return Ok(());
                     }
                     self.screen = Screen::Databases;
@@ -1063,8 +1233,8 @@ impl App {
             }
             Screen::Databases => {
                 if self.database_index.is_some() {
-                    if let Err(error) = self.load_collections() {
-                        self.message = Some(error.to_string());
+                    if let Err(error) = self.start_load_collections() {
+                        self.set_error_message(&error);
                         return Ok(());
                     }
                     self.screen = Screen::Collections;
@@ -1073,8 +1243,10 @@ impl App {
             Screen::Collections => {
                 if self.collection_index.is_some() {
                     self.document_page = 0;
-                    if let Err(error) = self.load_documents() {
-                        self.message = Some(error.to_string());
+                    if let Err(error) =
+                        self.start_load_documents(None, DocumentLoadReason::EnterCollection)
+                    {
+                        self.set_error_message(&error);
                         return Ok(());
                     }
                     self.screen = Screen::Documents;
@@ -1097,14 +1269,9 @@ impl App {
             return Ok(());
         }
         self.document_page += 1;
-        if let Err(error) = self.load_documents() {
-            self.message = Some(error.to_string());
+        if let Err(error) = self.start_load_documents(None, DocumentLoadReason::NavigateNext) {
+            self.set_error_message(&error);
             return Ok(());
-        }
-        if self.documents.is_empty() && self.document_page > 0 {
-            self.document_page -= 1;
-            let _ = self.load_documents();
-            self.message = Some("no more documents".to_string());
         }
         Ok(())
     }
@@ -1117,55 +1284,80 @@ impl App {
             return Ok(());
         }
         self.document_page -= 1;
-        if let Err(error) = self.load_documents() {
-            self.message = Some(error.to_string());
+        if let Err(error) = self.start_load_documents(None, DocumentLoadReason::NavigatePrevious) {
+            self.set_error_message(&error);
         }
         Ok(())
     }
 
-    fn load_databases(&mut self) -> Result<()> {
+    fn next_load_id(&mut self) -> u64 {
+        self.next_load_id = self.next_load_id.saturating_add(1);
+        self.next_load_id
+    }
+
+    fn start_load_databases(&mut self) -> Result<()> {
         let connection = self
             .selected_connection()
             .ok_or_else(|| anyhow::anyhow!("select a connection"))?;
-        let mut databases = self.runtime.block_on(
-            self.executor
-                .list_databases(&self.storage.config, Some(&connection.name)),
-        )?;
-        databases.sort();
-        self.database_items = databases;
-        self.database_index = if self.database_items.is_empty() {
-            None
-        } else {
-            Some(0)
-        };
+        let config = self.storage.config.clone();
+        let connection_name = connection.name.clone();
+        let request_id = self.next_load_id();
+        self.database_load_id = Some(request_id);
+        self.database_state = LoadState::Loading;
+        self.database_items.clear();
+        self.database_index = None;
         self.message = None;
+        let sender = self.load_tx.clone();
+        self.runtime.spawn(async move {
+            let executor = MongoExecutor::new();
+            let result = executor
+                .list_databases(&config, Some(&connection_name))
+                .await
+                .map_err(|error| error.to_string());
+            let _ = sender.send(LoadResult::Databases {
+                id: request_id,
+                result,
+            });
+        });
         Ok(())
     }
 
-    fn load_collections(&mut self) -> Result<()> {
+    fn start_load_collections(&mut self) -> Result<()> {
         let connection = self
             .selected_connection()
             .ok_or_else(|| anyhow::anyhow!("select a connection"))?;
         let database = self
             .selected_database()
             .ok_or_else(|| anyhow::anyhow!("select a database"))?;
-        let mut collections = self.runtime.block_on(self.executor.list_collections(
-            &self.storage.config,
-            Some(&connection.name),
-            database,
-        ))?;
-        collections.sort();
-        self.collection_items = collections;
-        self.collection_index = if self.collection_items.is_empty() {
-            None
-        } else {
-            Some(0)
-        };
+        let config = self.storage.config.clone();
+        let connection_name = connection.name.clone();
+        let database_name = database.to_string();
+        let request_id = self.next_load_id();
+        self.collection_load_id = Some(request_id);
+        self.collection_state = LoadState::Loading;
+        self.collection_items.clear();
+        self.collection_index = None;
         self.message = None;
+        let sender = self.load_tx.clone();
+        self.runtime.spawn(async move {
+            let executor = MongoExecutor::new();
+            let result = executor
+                .list_collections(&config, Some(&connection_name), &database_name)
+                .await
+                .map_err(|error| error.to_string());
+            let _ = sender.send(LoadResult::Collections {
+                id: request_id,
+                result,
+            });
+        });
         Ok(())
     }
 
-    fn load_documents(&mut self) -> Result<()> {
+    fn start_load_documents(
+        &mut self,
+        pending_index: Option<usize>,
+        reason: DocumentLoadReason,
+    ) -> Result<()> {
         let connection = self
             .selected_connection()
             .ok_or_else(|| anyhow::anyhow!("select a connection"))?;
@@ -1182,16 +1374,29 @@ impl App {
             skip: self.document_page * PAGE_SIZE,
             limit: PAGE_SIZE,
         };
-        let documents = self
-            .runtime
-            .block_on(self.executor.list_documents(&self.storage.config, &spec))?;
-        self.documents = documents;
-        self.document_index = if self.documents.is_empty() {
-            None
-        } else {
-            Some(0)
-        };
+        let config = self.storage.config.clone();
+        let request_id = self.next_load_id();
+        self.document_load_id = Some(request_id);
+        self.document_state = LoadState::Loading;
+        self.document_load_reason = reason;
+        self.document_pending_index = pending_index;
+        self.documents.clear();
+        self.document_index = None;
+        self.document_lines.clear();
+        self.document_scroll = 0;
         self.message = None;
+        let sender = self.load_tx.clone();
+        self.runtime.spawn(async move {
+            let executor = MongoExecutor::new();
+            let result = executor
+                .list_documents(&config, &spec)
+                .await
+                .map_err(|error| error.to_string());
+            let _ = sender.send(LoadResult::Documents {
+                id: request_id,
+                result,
+            });
+        });
         Ok(())
     }
 
@@ -1303,27 +1508,39 @@ impl App {
                 self.render_list(
                     frame,
                     layout[1],
-                    "Connections",
-                    &items,
-                    self.connection_index,
+                    ListView {
+                        title: "Connections",
+                        items: &items,
+                        selected: self.connection_index,
+                        load_state: &LoadState::Idle,
+                        loading_label: "loading connections...",
+                    },
                 );
             }
             Screen::Databases => {
                 self.render_list(
                     frame,
                     layout[1],
-                    "Databases",
-                    &self.database_items,
-                    self.database_index,
+                    ListView {
+                        title: "Databases",
+                        items: &self.database_items,
+                        selected: self.database_index,
+                        load_state: &self.database_state,
+                        loading_label: "loading databases...",
+                    },
                 );
             }
             Screen::Collections => {
                 self.render_list(
                     frame,
                     layout[1],
-                    "Collections",
-                    &self.collection_items,
-                    self.collection_index,
+                    ListView {
+                        title: "Collections",
+                        items: &self.collection_items,
+                        selected: self.collection_index,
+                        load_state: &self.collection_state,
+                        loading_label: "loading collections...",
+                    },
                 );
             }
             Screen::Documents => {
@@ -1333,7 +1550,17 @@ impl App {
                     .map(document_preview)
                     .collect::<Vec<_>>();
                 let title = format!("Documents (page {})", self.document_page + 1);
-                self.render_list(frame, layout[1], &title, &items, self.document_index);
+                self.render_list(
+                    frame,
+                    layout[1],
+                    ListView {
+                        title: &title,
+                        items: &items,
+                        selected: self.document_index,
+                        load_state: &self.document_state,
+                        loading_label: "loading documents...",
+                    },
+                );
             }
             Screen::DocumentView => {
                 let max_scroll = self.max_document_scroll();
@@ -1380,25 +1607,32 @@ impl App {
         &self,
         frame: &mut ratatui::Frame,
         area: ratatui::layout::Rect,
-        title: &str,
-        items: &[String],
-        selected: Option<usize>,
+        view: ListView<'_>,
     ) {
-        let title = Line::from(Span::styled(title.to_string(), self.theme.title_style()));
-        if items.is_empty() {
-            let placeholder = Paragraph::new("no items")
-                .style(self.theme.text_style())
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(self.theme.border_style())
-                        .title(title),
-                );
+        let title = Line::from(Span::styled(
+            view.title.to_string(),
+            self.theme.title_style(),
+        ));
+        if view.items.is_empty() {
+            let (text, style) = match view.load_state {
+                LoadState::Loading => (view.loading_label.to_string(), self.theme.text_style()),
+                LoadState::Failed(message) => {
+                    (format!("error: {message}"), self.theme.error_style())
+                }
+                LoadState::Idle => ("no items".to_string(), self.theme.text_style()),
+            };
+            let placeholder = Paragraph::new(text).style(style).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(self.theme.border_style())
+                    .title(title),
+            );
             frame.render_widget(placeholder, area);
             return;
         }
 
-        let items = items
+        let items = view
+            .items
             .iter()
             .map(|item| ListItem::new(item.clone()))
             .collect::<Vec<_>>();
@@ -1413,7 +1647,7 @@ impl App {
             .highlight_style(self.theme.selection_style())
             .highlight_symbol("> ");
         let mut state = ListState::default();
-        state.select(selected);
+        state.select(view.selected);
         frame.render_stateful_widget(list, area, &mut state);
     }
 
@@ -1531,6 +1765,36 @@ fn action_for_key(key: KeyEvent) -> Option<KeyAction> {
         .iter()
         .find(|binding| binding.matches(key))
         .map(|binding| binding.action)
+}
+
+fn is_network_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        let message = cause.to_string().to_ascii_lowercase();
+        message.contains("unable to connect")
+            || message.contains("failed to connect")
+            || message.contains("server selection")
+            || message.contains("network")
+            || message.contains("timed out")
+            || message.contains("timeout")
+    })
+}
+
+fn is_network_error_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("unable to connect")
+        || message.contains("failed to connect")
+        || message.contains("server selection")
+        || message.contains("network")
+        || message.contains("timed out")
+        || message.contains("timeout")
+}
+
+fn format_error_message(message: &str, is_network: bool) -> String {
+    let mut output = redact_uris_in_text(message);
+    if is_network {
+        output.push_str(" (network error: retry read-only operations)");
+    }
+    output
 }
 
 fn hint_groups(screen: Screen) -> &'static [HintGroup] {

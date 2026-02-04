@@ -86,6 +86,40 @@ pub fn redact_connection_uri(uri: &str) -> String {
     redacted
 }
 
+pub fn redact_uris_in_text(input: &str) -> String {
+    if !input.contains("mongodb://") && !input.contains("mongodb+srv://") {
+        return input.to_string();
+    }
+
+    let mut output = String::with_capacity(input.len());
+    let mut remainder = input;
+
+    while let Some(index) = find_next_mongo_uri(remainder) {
+        output.push_str(&remainder[..index]);
+        let rest = &remainder[index..];
+        let end = rest
+            .find(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | ')' | ']' | '}' | ','))
+            .unwrap_or(rest.len());
+        let uri = &rest[..end];
+        output.push_str(&redact_connection_uri(uri));
+        remainder = &rest[end..];
+    }
+
+    output.push_str(remainder);
+    output
+}
+
+fn find_next_mongo_uri(value: &str) -> Option<usize> {
+    let standard = value.find("mongodb://");
+    let srv = value.find("mongodb+srv://");
+    match (standard, srv) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
@@ -277,6 +311,30 @@ mod tests {
 
         let no_creds = "mongodb://localhost:27017";
         assert_eq!(redact_connection_uri(no_creds), no_creds);
+    }
+
+    #[test]
+    fn redact_uris_in_text_masks_credentials() {
+        let message = "error connecting to mongodb://user:secret@localhost:27017/app";
+        let redacted = redact_uris_in_text(message);
+        assert_eq!(
+            redacted,
+            "error connecting to mongodb://***@localhost:27017/app"
+        );
+    }
+
+    #[test]
+    fn redact_uris_in_text_handles_multiple_uris() {
+        let message = "mongodb://user@a mongodb+srv://user:pass@b.example.com";
+        let redacted = redact_uris_in_text(message);
+        assert_eq!(redacted, "mongodb://***@a mongodb+srv://***@b.example.com");
+    }
+
+    #[test]
+    fn redact_uris_in_text_returns_original_without_uri() {
+        let message = "no secrets here";
+        let redacted = redact_uris_in_text(message);
+        assert_eq!(redacted, message);
     }
 
     #[test]

@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use lazycompass_core::{
     AggregationRequest, AggregationTarget, Config, OutputFormat, QueryRequest, QueryTarget,
+    redact_uris_in_text,
 };
 use lazycompass_mongo::{AggregationSpec, Bson, Document, MongoExecutor, QuerySpec};
 use lazycompass_storage::{ConfigPaths, StorageSnapshot, load_config, load_storage, log_file_path};
@@ -117,9 +118,12 @@ fn run() -> Result<()> {
 }
 
 fn report_error(error: &anyhow::Error) {
-    eprintln!("error: {error}");
+    eprintln!("error: {}", redact_uris_in_text(&error.to_string()));
     for cause in error.chain().skip(1) {
-        eprintln!("caused by: {cause}");
+        eprintln!("caused by: {}", redact_uris_in_text(&cause.to_string()));
+    }
+    if network_message_matches(error) {
+        eprintln!("note: network errors can be transient; retry read-only operations");
     }
 }
 
@@ -447,7 +451,7 @@ fn parse_log_level(level: Option<&str>) -> (LevelFilter, Option<String>) {
 
 fn report_warnings(storage: &StorageSnapshot) {
     for warning in &storage.warnings {
-        eprintln!("warning: {warning}");
+        eprintln!("warning: {}", redact_uris_in_text(warning));
     }
 }
 

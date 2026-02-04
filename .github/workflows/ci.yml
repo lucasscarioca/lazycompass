@@ -16,6 +16,21 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Start MongoDB playground
+        run: docker compose -f dev/mongodb/docker-compose.yml up -d
+
+      - name: Wait for MongoDB
+        run: |
+          for i in {1..30}; do
+            if docker compose -f dev/mongodb/docker-compose.yml exec -T mongodb \
+              mongosh --quiet --eval "db.runCommand({ ping: 1 })" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose -f dev/mongodb/docker-compose.yml logs
+          exit 1
+
       - name: Format
         run: cargo fmt --check
 
@@ -23,4 +38,11 @@ jobs:
         run: cargo clippy --workspace -- -D warnings
 
       - name: Test
+        env:
+          LAZYCOMPASS_PLAYGROUND: "1"
+          LAZYCOMPASS_MONGO_URI: mongodb://localhost:27017
         run: cargo test --workspace
+
+      - name: Stop MongoDB playground
+        if: always()
+        run: docker compose -f dev/mongodb/docker-compose.yml down -v
