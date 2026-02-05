@@ -219,6 +219,6 @@ Follow Rust 2024 edition idioms and keep changes minimal and consistent.
 
 - Update `CHANGELOG.md` for user-visible changes; keep entries scoped to the release.
 - Follow `RELEASE.md` for versioning/tagging and release steps before publishing.
-- Run the checklist in `SECURITY_REVIEW.md` for dependency/config changes that affect security posture.
+- Run the checklist in `SECURITY.md` for dependency/config changes that affect security posture.
 - Sync config defaults and examples per `CONFIGURATION.md` when changing TOML schemas or paths.
 - Validate query/aggregation format updates against `QUERY_FORMAT.md`, and note any schema changes in `CHANGELOG.md`.

@@ -22,4 +22,4 @@ cargo build --workspace
 git tag -a v0.5.0 -m "v0.5.0"
 ```
 
-Security hardening: run the checklist in `SECURITY_REVIEW.md` for any dependency or config changes.
+Security hardening: run the checklist in `SECURITY.md` for any dependency or config changes.
