@@ -100,5 +100,13 @@ Hooks:
 
 ## Docs
 
-- `SPEC.md`: vision and roadmap
-- `PLAYGROUND.md`: test data and setup
+- `CONFIGURATION.md`: config schema and defaults
+- `QUERY_FORMAT.md`: saved query/aggregation schemas
+- `VERSIONING.md`: SemVer policy
+- `RELEASE.md`: release checklist
+- `CHANGELOG.md`: release notes
+
+## Releases
+
+- Update `CHANGELOG.md` for every release.
+- Follow `RELEASE.md` for the release checklist.
