@@ -54,6 +54,10 @@ Optional:
 - `connection` (string)
 - `notes` (string)
 
+Notes:
+
+- Pipelines containing `$out` or `$merge` are blocked by default. Set `allow_pipeline_writes = true` and disable `read_only` to run them.
+
 Example:
 
 ```toml

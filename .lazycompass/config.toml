@@ -1,4 +1,5 @@
 read_only = false
+allow_insecure = true
 
 [[connections]]
 name = "local"

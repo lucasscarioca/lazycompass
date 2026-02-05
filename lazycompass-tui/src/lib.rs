@@ -5,14 +5,16 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use lazycompass_core::{Config, ConnectionSpec, SavedAggregation, SavedQuery, redact_uris_in_text};
+use lazycompass_core::{
+    Config, ConnectionSpec, SavedAggregation, SavedQuery, WriteGuard, redact_sensitive_text,
+};
 use lazycompass_mongo::{
     Bson, Document, DocumentDeleteSpec, DocumentInsertSpec, DocumentListSpec, DocumentReplaceSpec,
     MongoExecutor, parse_json_document,
 };
 use lazycompass_storage::{
-    ConfigPaths, StorageSnapshot, load_storage, saved_aggregation_path, saved_query_path,
-    write_saved_aggregation, write_saved_query,
+    ConfigPaths, StorageSnapshot, load_storage_with_config, saved_aggregation_path,
+    saved_query_path, write_saved_aggregation, write_saved_query,
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -22,7 +24,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use std::collections::VecDeque;
 use std::fs;
-use std::io::{Stdout, stdout};
+use std::io::{Stdout, Write, stdout};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -864,15 +866,16 @@ impl App {
     }
 
     fn perform_confirm_action(&mut self, action: ConfirmAction) -> Result<()> {
-        if self.read_only && matches!(action, ConfirmAction::DeleteDocument { .. }) {
-            self.message = Some("read-only mode: write operations are disabled".to_string());
-            return Ok(());
-        }
+        let guard = WriteGuard::new(self.read_only, self.storage.config.allow_pipeline_writes());
         match action {
             ConfirmAction::DeleteDocument {
                 spec,
                 return_to_documents,
             } => {
+                if let Err(error) = guard.ensure_write_allowed("delete documents") {
+                    self.message = Some(error.to_string());
+                    return Ok(());
+                }
                 self.runtime
                     .block_on(self.executor.delete_document(&self.storage.config, &spec))?;
                 if return_to_documents {
@@ -882,11 +885,19 @@ impl App {
                 self.message = Some("document deleted".to_string());
             }
             ConfirmAction::OverwriteQuery { query } => {
+                if let Err(error) = guard.ensure_write_allowed("save queries") {
+                    self.message = Some(error.to_string());
+                    return Ok(());
+                }
                 let path = write_saved_query(&self.paths, &query, true)?;
                 self.upsert_query(query);
                 self.message = Some(format!("saved query to {}", path.display()));
             }
             ConfirmAction::OverwriteAggregation { aggregation } => {
+                if let Err(error) = guard.ensure_write_allowed("save aggregations") {
+                    self.message = Some(error.to_string());
+                    return Ok(());
+                }
                 let path = write_saved_aggregation(&self.paths, &aggregation, true)?;
                 self.upsert_aggregation(aggregation);
                 self.message = Some(format!("saved aggregation to {}", path.display()));
@@ -900,20 +911,20 @@ impl App {
         self.message = Some(message);
     }
 
-    fn block_if_read_only(&mut self) -> bool {
-        if self.read_only {
-            self.message = Some("read-only mode: write operations are disabled".to_string());
-            true
-        } else {
-            false
+    fn block_if_read_only(&mut self, action: &str) -> bool {
+        let guard = WriteGuard::new(self.read_only, self.storage.config.allow_pipeline_writes());
+        if let Err(error) = guard.ensure_write_allowed(action) {
+            self.message = Some(error.to_string());
+            return true;
         }
+        false
     }
 
     fn request_delete_document(&mut self) -> Result<()> {
         if !matches!(self.screen, Screen::Documents | Screen::DocumentView) {
             return Ok(());
         }
-        if self.block_if_read_only() {
+        if self.block_if_read_only("delete documents") {
             return Ok(());
         }
         let result = (|| -> Result<()> {
@@ -952,7 +963,7 @@ impl App {
         if self.screen != Screen::Documents {
             return Ok(());
         }
-        if self.block_if_read_only() {
+        if self.block_if_read_only("insert documents") {
             return Ok(());
         }
         let result = (|| -> Result<()> {
@@ -978,7 +989,7 @@ impl App {
         if !matches!(self.screen, Screen::Documents | Screen::DocumentView) {
             return Ok(());
         }
-        if self.block_if_read_only() {
+        if self.block_if_read_only("edit documents") {
             return Ok(());
         }
         let result = (|| -> Result<()> {
@@ -1004,6 +1015,9 @@ impl App {
 
     fn save_query(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
         if self.screen != Screen::Documents {
+            return Ok(());
+        }
+        if self.block_if_read_only("save queries") {
             return Ok(());
         }
         let result = (|| -> Result<()> {
@@ -1037,6 +1051,9 @@ impl App {
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> Result<()> {
         if self.screen != Screen::Documents {
+            return Ok(());
+        }
+        if self.block_if_read_only("save aggregations") {
             return Ok(());
         }
         let result = (|| -> Result<()> {
@@ -1253,7 +1270,7 @@ impl App {
         initial: &str,
     ) -> Result<String> {
         let path = editor_temp_path(label);
-        fs::write(&path, initial)
+        write_editor_temp_file(&path, initial)
             .with_context(|| format!("unable to write temporary file {}", path.display()))?;
 
         suspend_terminal(terminal)?;
@@ -2090,7 +2107,7 @@ fn is_network_error_message(message: &str) -> bool {
 }
 
 fn format_error_message(message: &str, is_network: bool) -> String {
-    let mut output = redact_uris_in_text(message);
+    let mut output = redact_sensitive_text(message);
     if is_network {
         output.push_str(" (network error: retry read-only operations)");
     }
@@ -2179,10 +2196,11 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     vertical[1]
 }
 
-pub fn run(read_only: bool) -> Result<()> {
+pub fn run(config: Config) -> Result<()> {
     let cwd = std::env::current_dir().context("unable to resolve current directory")?;
     let paths = ConfigPaths::resolve_from(&cwd)?;
-    let storage = load_storage(&paths)?;
+    let read_only = config.read_only();
+    let storage = load_storage_with_config(&paths, config)?;
     let mut app = App::new(paths, storage, read_only)?;
 
     let mut terminal = setup_terminal()?;
@@ -2235,18 +2253,102 @@ fn resolve_editor() -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("$VISUAL or $EDITOR is required for editing"))
 }
 
+fn parse_editor_command(editor: &str) -> Result<Vec<String>> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut chars = editor.chars().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+
+    while let Some(ch) = chars.next() {
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+
+        if in_double {
+            match ch {
+                '"' => in_double = false,
+                '\\' => {
+                    let next = chars
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("unterminated escape in editor command"))?;
+                    current.push(next);
+                }
+                _ => current.push(ch),
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' => in_single = true,
+            '"' => in_double = true,
+            '\\' => {
+                let next = chars
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("unterminated escape in editor command"))?;
+                current.push(next);
+            }
+            ch if ch.is_whitespace() => {
+                if !current.is_empty() {
+                    args.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if in_single || in_double {
+        anyhow::bail!("unterminated quote in editor command");
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+    if args.is_empty() {
+        anyhow::bail!("editor command is empty");
+    }
+    Ok(args)
+}
+
 fn run_editor_command(editor: &str, path: &Path) -> Result<std::process::ExitStatus> {
-    if editor.split_whitespace().count() > 1 {
-        Command::new("sh")
-            .arg("-c")
-            .arg(format!("{editor} \"{}\"", path.display()))
-            .status()
-            .context("failed to launch editor")
-    } else {
-        Command::new(editor)
-            .arg(path)
-            .status()
-            .context("failed to launch editor")
+    let args = parse_editor_command(editor)?;
+    let (program, rest) = args
+        .split_first()
+        .ok_or_else(|| anyhow::anyhow!("editor command is empty"))?;
+    Command::new(program)
+        .args(rest)
+        .arg(path)
+        .status()
+        .context("failed to launch editor")
+}
+
+fn write_editor_temp_file(path: &Path, contents: &str) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        use std::os::unix::fs::PermissionsExt;
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(path)
+            .with_context(|| format!("unable to open temporary file {}", path.display()))?;
+        file.write_all(contents.as_bytes())
+            .with_context(|| format!("unable to write temporary file {}", path.display()))?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("unable to set permissions on {}", path.display()))?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, contents)
+            .with_context(|| format!("unable to write temporary file {}", path.display()))?;
+        Ok(())
     }
 }
 
@@ -2324,6 +2426,8 @@ mod tests {
             },
             logging: lazycompass_core::LoggingConfig::default(),
             read_only: None,
+            allow_pipeline_writes: None,
+            allow_insecure: None,
             timeouts: lazycompass_core::TimeoutConfig::default(),
         };
         let (theme, warning) = resolve_theme(&config);
@@ -2340,10 +2444,27 @@ mod tests {
             },
             logging: lazycompass_core::LoggingConfig::default(),
             read_only: None,
+            allow_pipeline_writes: None,
+            allow_insecure: None,
             timeouts: lazycompass_core::TimeoutConfig::default(),
         };
         let (theme, warning) = resolve_theme(&config);
         assert!(warning.is_none());
         assert_eq!(theme.accent, THEME_EMBER.accent);
+    }
+
+    #[test]
+    fn parse_editor_command_handles_quotes() {
+        let args = parse_editor_command("nvim -c \"set ft=json\"").expect("parse editor command");
+        assert_eq!(args, vec!["nvim", "-c", "set ft=json"]);
+        let args = parse_editor_command("code --wait").expect("parse editor command");
+        assert_eq!(args, vec!["code", "--wait"]);
+        let args = parse_editor_command("edit 'arg with spaces'").expect("parse editor command");
+        assert_eq!(args, vec!["edit", "arg with spaces"]);
+    }
+
+    #[test]
+    fn parse_editor_command_rejects_unclosed_quotes() {
+        assert!(parse_editor_command("nvim -c \"oops").is_err());
     }
 }

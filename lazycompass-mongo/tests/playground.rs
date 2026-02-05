@@ -33,6 +33,8 @@ async fn playground_query_and_aggregation() -> Result<()> {
         theme: ThemeConfig::default(),
         logging: LoggingConfig::default(),
         read_only: Some(true),
+        allow_pipeline_writes: None,
+        allow_insecure: None,
         timeouts: TimeoutConfig {
             connect_ms: Some(5_000),
             query_ms: Some(5_000),

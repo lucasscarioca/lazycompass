@@ -183,6 +183,61 @@ detect_target() {
   echo "$os-$arch"
 }
 
+sha256_command() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    echo "sha256sum"
+    return 0
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    echo "shasum -a 256"
+    return 0
+  fi
+  return 1
+}
+
+verify_checksum() {
+  local checksum_file=$1
+  local asset_file=$2
+  local tool
+  if ! tool=$(sha256_command); then
+    print_message warning "SHA256 tool not found; skipping checksum verification."
+    return 0
+  fi
+
+  local expected
+  IFS=' ' read -r expected _ < "$checksum_file"
+  if [[ -z "$expected" ]]; then
+    echo -e "${RED}Error: checksum file is empty or invalid${NC}" >&2
+    exit 1
+  fi
+
+  local actual
+  actual="$($tool "$asset_file")"
+  actual="${actual%% *}"
+  if [[ "$expected" != "$actual" ]]; then
+    echo -e "${RED}Error: checksum verification failed${NC}" >&2
+    echo -e "Expected: $expected" >&2
+    echo -e "Actual:   $actual" >&2
+    exit 1
+  fi
+  print_message info "${MUTED}Checksum verified.${NC}"
+}
+
+verify_signature() {
+  local checksum_file=$1
+  local sig_file=$2
+  if ! command -v gpg >/dev/null 2>&1; then
+    print_message warning "gpg not found; skipping signature verification."
+    return 0
+  fi
+
+  if ! gpg --verify "$sig_file" "$checksum_file" >/dev/null 2>&1; then
+    echo -e "${RED}Error: checksum signature verification failed${NC}" >&2
+    exit 1
+  fi
+  print_message info "${MUTED}Signature verified.${NC}"
+}
+
 download_and_install() {
   local repo=$1
   local target
@@ -190,6 +245,8 @@ download_and_install() {
   local asset="${APP}-${target}.tar.gz"
   local version=""
   local url=""
+  local checksum_url=""
+  local checksum_sig_url=""
 
   if [ -z "$requested_version" ]; then
     url="https://github.com/${repo}/releases/latest/download/${asset}"
@@ -198,6 +255,9 @@ download_and_install() {
     url="https://github.com/${repo}/releases/download/v${requested_version}/${asset}"
     version="$requested_version"
   fi
+
+  checksum_url="${url}.sha256"
+  checksum_sig_url="${checksum_url}.sig"
 
   if ! command -v curl >/dev/null 2>&1; then
     echo -e "${RED}Error: curl is required but not installed${NC}" >&2
@@ -217,6 +277,22 @@ download_and_install() {
   local tmp_dir="${TMPDIR:-/tmp}/lazycompass_install_$$"
   mkdir -p "$tmp_dir"
   curl -# -L -o "$tmp_dir/$asset" "$url"
+
+  local checksum_file="$tmp_dir/${asset}.sha256"
+  local checksum_sig_file="$tmp_dir/${asset}.sha256.sig"
+  if curl -fsSL -o "$checksum_file" "$checksum_url"; then
+    print_message info "${MUTED}Verifying checksum...${NC}"
+    verify_checksum "$checksum_file" "$tmp_dir/$asset"
+    if curl -fsSL -o "$checksum_sig_file" "$checksum_sig_url"; then
+      print_message info "${MUTED}Verifying checksum signature...${NC}"
+      verify_signature "$checksum_file" "$checksum_sig_file"
+    else
+      print_message warning "Checksum signature not found; skipping signature verification."
+    fi
+  else
+    print_message warning "Checksum not found; skipping verification."
+  fi
+
   tar -xzf "$tmp_dir/$asset" -C "$tmp_dir"
   if [ ! -f "$tmp_dir/$APP" ]; then
     echo -e "${RED}Error: expected binary '$APP' in archive${NC}" >&2

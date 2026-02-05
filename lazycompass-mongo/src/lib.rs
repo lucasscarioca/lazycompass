@@ -2,7 +2,7 @@ pub use mongodb::bson::{Bson, Document};
 
 use anyhow::{Context, Result};
 use futures::TryStreamExt;
-use lazycompass_core::{Config, ConnectionSpec, redact_connection_uri};
+use lazycompass_core::{Config, ConnectionSpec, WriteGuard, redact_connection_uri};
 use mongodb::{
     Client, bson,
     options::{AggregateOptions, ClientOptions, FindOptions},
@@ -159,6 +159,9 @@ impl MongoExecutor {
         let collection = database.collection::<Document>(&spec.collection);
 
         let pipeline = parse_json_pipeline(&spec.pipeline)?;
+        if let Some(stage) = find_pipeline_write_stage(&pipeline) {
+            WriteGuard::from_config(config).ensure_pipeline_allowed(stage)?;
+        }
         let options = AggregateOptions::builder()
             .max_time(config.query_timeout())
             .build();
@@ -246,6 +249,7 @@ impl MongoExecutor {
         config: &Config,
         spec: &DocumentInsertSpec,
     ) -> Result<Bson> {
+        WriteGuard::from_config(config).ensure_write_allowed("insert documents")?;
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
         let client = connect(config, connection).await?;
         let database = client.database(&spec.database);
@@ -268,6 +272,7 @@ impl MongoExecutor {
         config: &Config,
         spec: &DocumentReplaceSpec,
     ) -> Result<()> {
+        WriteGuard::from_config(config).ensure_write_allowed("replace documents")?;
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
         let client = connect(config, connection).await?;
         let database = client.database(&spec.database);
@@ -294,6 +299,7 @@ impl MongoExecutor {
     }
 
     pub async fn delete_document(&self, config: &Config, spec: &DocumentDeleteSpec) -> Result<()> {
+        WriteGuard::from_config(config).ensure_write_allowed("delete documents")?;
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
         let client = connect(config, connection).await?;
         let database = client.database(&spec.database);
@@ -363,6 +369,18 @@ fn parse_json_pipeline(value: &str) -> Result<Vec<Document>> {
     }
 }
 
+fn find_pipeline_write_stage(pipeline: &[Document]) -> Option<&'static str> {
+    for stage in pipeline {
+        if stage.contains_key("$out") {
+            return Some("$out");
+        }
+        if stage.contains_key("$merge") {
+            return Some("$merge");
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,5 +411,20 @@ mod tests {
             },
             other => panic!("unexpected match stage: {other:?}"),
         }
+    }
+
+    #[test]
+    fn find_pipeline_write_stage_detects_out_and_merge() {
+        let pipeline = vec![
+            bson::doc! { "$match": { "active": true } },
+            bson::doc! { "$out": "archive" },
+        ];
+        assert_eq!(find_pipeline_write_stage(&pipeline), Some("$out"));
+
+        let pipeline = vec![bson::doc! { "$merge": { "into": "archive" } }];
+        assert_eq!(find_pipeline_write_stage(&pipeline), Some("$merge"));
+
+        let pipeline = vec![bson::doc! { "$group": { "_id": "$userId" } }];
+        assert_eq!(find_pipeline_write_stage(&pipeline), None);
     }
 }

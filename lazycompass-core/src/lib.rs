@@ -20,6 +20,10 @@ pub struct Config {
     #[serde(default)]
     pub read_only: Option<bool>,
     #[serde(default)]
+    pub allow_pipeline_writes: Option<bool>,
+    #[serde(default)]
+    pub allow_insecure: Option<bool>,
+    #[serde(default)]
     pub timeouts: TimeoutConfig,
 }
 
@@ -109,6 +113,11 @@ pub fn redact_uris_in_text(input: &str) -> String {
     output
 }
 
+pub fn redact_sensitive_text(input: &str) -> String {
+    let output = redact_uris_in_text(input);
+    redact_query_fields_in_text(&output)
+}
+
 fn find_next_mongo_uri(value: &str) -> Option<usize> {
     let standard = value.find("mongodb://");
     let srv = value.find("mongodb+srv://");
@@ -118,6 +127,60 @@ fn find_next_mongo_uri(value: &str) -> Option<usize> {
         (None, Some(b)) => Some(b),
         (None, None) => None,
     }
+}
+
+fn redact_query_fields_in_text(input: &str) -> String {
+    let lower = input.to_ascii_lowercase();
+    if !lower.contains("filter") && !lower.contains("pipeline") {
+        return input.to_string();
+    }
+
+    let mut output = String::with_capacity(input.len());
+    for (index, line) in input.split('\n').enumerate() {
+        if index > 0 {
+            output.push('\n');
+        }
+        let line = redact_query_field_in_line(line, "filter");
+        let line = redact_query_field_in_line(&line, "pipeline");
+        output.push_str(&line);
+    }
+    output
+}
+
+fn redact_query_field_in_line(line: &str, field: &str) -> String {
+    let lower = line.to_ascii_lowercase();
+    let mut search_start = 0;
+    while let Some(pos) = lower[search_start..].find(field) {
+        let pos = search_start + pos;
+        if pos > 0 {
+            let prev = line.as_bytes()[pos - 1];
+            if (prev as char).is_ascii_alphanumeric() || prev == b'_' {
+                search_start = pos + field.len();
+                continue;
+            }
+        }
+
+        let mut index = pos + field.len();
+        let bytes = line.as_bytes();
+        while index < bytes.len() && (bytes[index] == b' ' || bytes[index] == b'\t') {
+            index += 1;
+        }
+        if index >= bytes.len() {
+            break;
+        }
+        let separator = bytes[index];
+        if separator == b'=' || separator == b':' {
+            let prefix_end = index + 1;
+            let mut redacted = String::with_capacity(line.len());
+            redacted.push_str(&line[..prefix_end]);
+            redacted.push_str(" <redacted>");
+            return redacted;
+        }
+
+        search_start = pos + field.len();
+    }
+
+    line.to_string()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,6 +204,14 @@ impl Config {
         self.read_only.unwrap_or(true)
     }
 
+    pub fn allow_pipeline_writes(&self) -> bool {
+        self.allow_pipeline_writes.unwrap_or(false)
+    }
+
+    pub fn allow_insecure(&self) -> bool {
+        self.allow_insecure.unwrap_or(false)
+    }
+
     pub fn connect_timeout(&self) -> Duration {
         Duration::from_millis(
             self.timeouts
@@ -152,6 +223,157 @@ impl Config {
     pub fn query_timeout(&self) -> Duration {
         Duration::from_millis(self.timeouts.query_ms.unwrap_or(DEFAULT_QUERY_TIMEOUT_MS))
     }
+}
+
+pub fn connection_security_warnings(config: &Config) -> Vec<String> {
+    if config.allow_insecure() {
+        return Vec::new();
+    }
+
+    let mut warnings = Vec::new();
+    for connection in &config.connections {
+        let security = connection_security(&connection.uri);
+        let missing = match (security.tls, security.auth) {
+            (false, false) => Some("TLS and authentication"),
+            (false, true) => Some("TLS"),
+            (true, false) => Some("authentication"),
+            (true, true) => None,
+        };
+        let Some(missing) = missing else {
+            continue;
+        };
+        let redacted_uri = redact_connection_uri(&connection.uri);
+        warnings.push(format!(
+            "connection '{}' is missing {missing}; set allow_insecure=true to silence (uri: {redacted_uri})",
+            connection.name
+        ));
+    }
+    warnings
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ConnectionSecurity {
+    tls: bool,
+    auth: bool,
+}
+
+fn connection_security(uri: &str) -> ConnectionSecurity {
+    let mut tls = uri.starts_with("mongodb+srv://");
+    let mut auth = uri_has_userinfo(uri);
+    let mut tls_override = None;
+
+    for (key, value) in mongo_uri_query_params(uri) {
+        let key = key.to_ascii_lowercase();
+        if (key == "tls" || key == "ssl")
+            && let Some(parsed) = parse_bool(value)
+        {
+            tls_override = Some(parsed);
+        }
+        if key == "authmechanism" && !value.trim().is_empty() {
+            auth = true;
+        }
+    }
+
+    if let Some(tls_override) = tls_override {
+        tls = tls_override;
+    }
+
+    ConnectionSecurity { tls, auth }
+}
+
+fn uri_has_userinfo(uri: &str) -> bool {
+    let Some(scheme_end) = uri.find("://") else {
+        return false;
+    };
+    let authority_start = scheme_end + 3;
+    let mut authority_end = uri.len();
+    for (index, ch) in uri[authority_start..].char_indices() {
+        if ch == '/' || ch == '?' {
+            authority_end = authority_start + index;
+            break;
+        }
+    }
+
+    let authority = &uri[authority_start..authority_end];
+    let Some(at_index) = authority.rfind('@') else {
+        return false;
+    };
+    let userinfo = &authority[..at_index];
+    !userinfo.trim().is_empty()
+}
+
+fn mongo_uri_query_params(uri: &str) -> Vec<(&str, &str)> {
+    let Some(start) = uri.find('?') else {
+        return Vec::new();
+    };
+    let query = &uri[start + 1..];
+    let mut params = Vec::new();
+    for segment in query.split('&') {
+        for item in segment.split(';') {
+            if item.is_empty() {
+                continue;
+            }
+            let mut parts = item.splitn(2, '=');
+            let key = parts.next().unwrap_or_default();
+            let value = parts.next().unwrap_or_default();
+            params.push((key, value));
+        }
+    }
+    params
+}
+
+fn parse_bool(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" => Some(true),
+        "false" | "0" | "no" => Some(false),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WriteGuard {
+    read_only: bool,
+    allow_pipeline_writes: bool,
+}
+
+impl WriteGuard {
+    pub fn new(read_only: bool, allow_pipeline_writes: bool) -> Self {
+        Self {
+            read_only,
+            allow_pipeline_writes,
+        }
+    }
+
+    pub fn from_config(config: &Config) -> Self {
+        Self::new(config.read_only(), config.allow_pipeline_writes())
+    }
+
+    pub fn ensure_write_allowed(&self, action: &str) -> Result<(), WriteGuardError> {
+        if self.read_only {
+            return Err(WriteGuardError::ReadOnly {
+                action: action.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    pub fn ensure_pipeline_allowed(&self, stage: &str) -> Result<(), WriteGuardError> {
+        self.ensure_write_allowed("aggregation pipeline write stages")?;
+        if !self.allow_pipeline_writes {
+            return Err(WriteGuardError::PipelineWrite {
+                stage: stage.to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum WriteGuardError {
+    #[error("read-only mode: {action} is disabled")]
+    ReadOnly { action: String },
+    #[error("pipeline stage '{stage}' is blocked; enable allow_pipeline_writes to proceed")]
+    PipelineWrite { stage: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -338,6 +560,58 @@ mod tests {
     }
 
     #[test]
+    fn redact_sensitive_text_masks_filter_and_pipeline() {
+        let message = "invalid query: filter = \"{ \\\"active\\\": true }\"";
+        let redacted = redact_sensitive_text(message);
+        assert_eq!(redacted, "invalid query: filter = <redacted>");
+
+        let message = "pipeline: [ { \"$match\": { \"active\": true } } ]";
+        let redacted = redact_sensitive_text(message);
+        assert_eq!(redacted, "pipeline: <redacted>");
+    }
+
+    #[test]
+    fn connection_security_warnings_detect_missing_tls_and_auth() {
+        let config = Config {
+            connections: vec![ConnectionSpec {
+                name: "local".to_string(),
+                uri: "mongodb://localhost:27017".to_string(),
+                default_database: None,
+            }],
+            theme: ThemeConfig::default(),
+            logging: LoggingConfig::default(),
+            read_only: None,
+            allow_pipeline_writes: None,
+            allow_insecure: None,
+            timeouts: TimeoutConfig::default(),
+        };
+
+        let warnings = connection_security_warnings(&config);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("TLS and authentication"));
+    }
+
+    #[test]
+    fn connection_security_warnings_respects_allow_insecure() {
+        let config = Config {
+            connections: vec![ConnectionSpec {
+                name: "local".to_string(),
+                uri: "mongodb://localhost:27017".to_string(),
+                default_database: None,
+            }],
+            theme: ThemeConfig::default(),
+            logging: LoggingConfig::default(),
+            read_only: None,
+            allow_pipeline_writes: None,
+            allow_insecure: Some(true),
+            timeouts: TimeoutConfig::default(),
+        };
+
+        let warnings = connection_security_warnings(&config);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
     fn default_timeouts_are_applied() {
         let config = Config::default();
         assert_eq!(
@@ -358,5 +632,39 @@ mod tests {
         let mut config = Config::default();
         config.read_only = Some(false);
         assert!(!config.read_only());
+    }
+
+    #[test]
+    fn allow_pipeline_writes_defaults_to_false() {
+        let config = Config::default();
+        assert!(!config.allow_pipeline_writes());
+
+        let mut config = Config::default();
+        config.allow_pipeline_writes = Some(true);
+        assert!(config.allow_pipeline_writes());
+    }
+
+    #[test]
+    fn write_guard_blocks_in_read_only() {
+        let guard = WriteGuard::new(true, true);
+        let err = guard
+            .ensure_write_allowed("insert documents")
+            .expect_err("read-only");
+        assert!(matches!(err, WriteGuardError::ReadOnly { .. }));
+    }
+
+    #[test]
+    fn write_guard_blocks_pipeline_without_flag() {
+        let guard = WriteGuard::new(false, false);
+        let err = guard
+            .ensure_pipeline_allowed("$out")
+            .expect_err("pipeline guard");
+        assert!(matches!(err, WriteGuardError::PipelineWrite { .. }));
+    }
+
+    #[test]
+    fn write_guard_allows_pipeline_with_flag() {
+        let guard = WriteGuard::new(false, true);
+        assert!(guard.ensure_pipeline_allowed("$merge").is_ok());
     }
 }

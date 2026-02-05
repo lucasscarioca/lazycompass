@@ -41,6 +41,22 @@ LAZYCOMPASS_INSTALL_URL=https://raw.githubusercontent.com/lucasscarioca/lazycomp
   lazycompass upgrade
 ```
 
+Verification:
+
+- The installer verifies release asset checksums when a `.sha256` file is present.
+- If a `.sha256.sig` signature is present and `gpg` is installed, the installer verifies it too.
+
+Manual verification example (Linux x64):
+
+```bash
+curl -LO https://github.com/lucasscarioca/lazycompass/releases/latest/download/lazycompass-linux-x64.tar.gz
+curl -LO https://github.com/lucasscarioca/lazycompass/releases/latest/download/lazycompass-linux-x64.tar.gz.sha256
+curl -LO https://github.com/lucasscarioca/lazycompass/releases/latest/download/lazycompass-linux-x64.tar.gz.sha256.sig
+
+gpg --verify lazycompass-linux-x64.tar.gz.sha256.sig lazycompass-linux-x64.tar.gz.sha256
+sha256sum -c lazycompass-linux-x64.tar.gz.sha256 2>/dev/null || shasum -a 256 -c lazycompass-linux-x64.tar.gz.sha256
+```
+
 ## Usage
 
 Start the TUI:
@@ -49,7 +65,7 @@ Start the TUI:
 lazycompass
 ```
 
-Write actions open your `$VISUAL` or `$EDITOR` for JSON/TOML editing.
+Write actions open your `$VISUAL` or `$EDITOR` for JSON/TOML editing (command + args only; no shell expansion).
 
 Documents screen keys: `i` insert, `e` edit, `d` delete, `Q` save query, `A` save aggregation.
 

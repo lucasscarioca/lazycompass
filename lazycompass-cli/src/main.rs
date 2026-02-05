@@ -2,15 +2,19 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use lazycompass_core::{
     AggregationRequest, AggregationTarget, Config, OutputFormat, QueryRequest, QueryTarget,
-    redact_uris_in_text,
+    WriteGuard, redact_sensitive_text,
 };
 use lazycompass_mongo::{AggregationSpec, Bson, Document, MongoExecutor, QuerySpec};
 use lazycompass_storage::{ConfigPaths, StorageSnapshot, load_config, load_storage, log_file_path};
 use std::collections::BTreeSet;
+use std::env;
 use std::fs;
+use std::io::stderr;
 use std::path::Path;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing_subscriber::filter::{LevelFilter, Targets};
+use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 
 const DEFAULT_INSTALL_URL: &str =
@@ -24,6 +28,10 @@ struct Cli {
     command: Option<Commands>,
     #[arg(long, global = true)]
     write_enabled: bool,
+    #[arg(long, global = true)]
+    allow_pipeline_writes: bool,
+    #[arg(long, global = true)]
+    allow_insecure: bool,
 }
 
 #[derive(Subcommand)]
@@ -94,23 +102,34 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Query(args)) => run_query(args)?,
-        Some(Commands::Agg(args)) => run_agg(args)?,
+        Some(Commands::Query(args)) => run_query(
+            args,
+            cli.write_enabled,
+            cli.allow_pipeline_writes,
+            cli.allow_insecure,
+        )?,
+        Some(Commands::Agg(args)) => run_agg(
+            args,
+            cli.write_enabled,
+            cli.allow_pipeline_writes,
+            cli.allow_insecure,
+        )?,
         Some(Commands::Upgrade(args)) => {
             run_upgrade(args)?;
         }
         None => {
             let cwd = std::env::current_dir().context("unable to resolve current directory")?;
             let paths = ConfigPaths::resolve_from(&cwd)?;
-            let config = load_config(&paths)?;
-            let read_only = if cli.write_enabled {
-                false
-            } else {
-                config.read_only()
-            };
+            let mut config = load_config(&paths)?;
+            apply_cli_overrides(
+                &mut config,
+                cli.write_enabled,
+                cli.allow_pipeline_writes,
+                cli.allow_insecure,
+            );
             init_logging(&paths, &config)?;
             tracing::info!(component = "tui", command = "tui", "lazycompass started");
-            lazycompass_tui::run(read_only)?;
+            lazycompass_tui::run(config)?;
         }
     }
 
@@ -118,9 +137,9 @@ fn run() -> Result<()> {
 }
 
 fn report_error(error: &anyhow::Error) {
-    eprintln!("error: {}", redact_uris_in_text(&error.to_string()));
+    eprintln!("error: {}", redact_sensitive_text(&error.to_string()));
     for cause in error.chain().skip(1) {
-        eprintln!("caused by: {}", redact_uris_in_text(&cause.to_string()));
+        eprintln!("caused by: {}", redact_sensitive_text(&cause.to_string()));
     }
     if network_message_matches(error) {
         eprintln!("note: network errors can be transient; retry read-only operations");
@@ -288,17 +307,29 @@ fn build_agg_request(args: AggArgs) -> Result<AggregationRequest> {
     })
 }
 
-fn run_query(args: QueryArgs) -> Result<()> {
+fn run_query(
+    args: QueryArgs,
+    write_enabled: bool,
+    allow_pipeline_writes: bool,
+    allow_insecure: bool,
+) -> Result<()> {
     let cwd = std::env::current_dir().context("unable to resolve current directory")?;
     let paths = ConfigPaths::resolve_from(&cwd)?;
     let request = build_query_request(args)?;
     let storage = load_storage(&paths)?;
-    init_logging(&paths, &storage.config)?;
+    let mut config = storage.config.clone();
+    apply_cli_overrides(
+        &mut config,
+        write_enabled,
+        allow_pipeline_writes,
+        allow_insecure,
+    );
+    init_logging(&paths, &config)?;
     tracing::info!(component = "cli", command = "query", "lazycompass started");
     report_warnings(&storage);
     let spec = resolve_query_spec(&request, &storage)?;
     let executor = MongoExecutor::new();
-    let connection = executor.resolve_connection(&storage.config, spec.connection.as_deref())?;
+    let connection = executor.resolve_connection(&config, spec.connection.as_deref())?;
     tracing::info!(
         component = "cli",
         command = "query",
@@ -308,21 +339,33 @@ fn run_query(args: QueryArgs) -> Result<()> {
         "executing query"
     );
     let runtime = tokio::runtime::Runtime::new().context("unable to start async runtime")?;
-    let documents = runtime.block_on(executor.execute_query(&storage.config, &spec))?;
+    let documents = runtime.block_on(executor.execute_query(&config, &spec))?;
     print_documents(request.output, &documents)
 }
 
-fn run_agg(args: AggArgs) -> Result<()> {
+fn run_agg(
+    args: AggArgs,
+    write_enabled: bool,
+    allow_pipeline_writes: bool,
+    allow_insecure: bool,
+) -> Result<()> {
     let cwd = std::env::current_dir().context("unable to resolve current directory")?;
     let paths = ConfigPaths::resolve_from(&cwd)?;
     let request = build_agg_request(args)?;
     let storage = load_storage(&paths)?;
-    init_logging(&paths, &storage.config)?;
+    let mut config = storage.config.clone();
+    apply_cli_overrides(
+        &mut config,
+        write_enabled,
+        allow_pipeline_writes,
+        allow_insecure,
+    );
+    init_logging(&paths, &config)?;
     tracing::info!(component = "cli", command = "agg", "lazycompass started");
     report_warnings(&storage);
     let spec = resolve_aggregation_spec(&request, &storage)?;
     let executor = MongoExecutor::new();
-    let connection = executor.resolve_connection(&storage.config, spec.connection.as_deref())?;
+    let connection = executor.resolve_connection(&config, spec.connection.as_deref())?;
     tracing::info!(
         component = "cli",
         command = "agg",
@@ -332,28 +375,11 @@ fn run_agg(args: AggArgs) -> Result<()> {
         "executing aggregation"
     );
     let runtime = tokio::runtime::Runtime::new().context("unable to start async runtime")?;
-    let documents = runtime.block_on(executor.execute_aggregation(&storage.config, &spec))?;
+    let documents = runtime.block_on(executor.execute_aggregation(&config, &spec))?;
     print_documents(request.output, &documents)
 }
 
 fn init_logging(paths: &ConfigPaths, config: &Config) -> Result<()> {
-    let log_path = log_file_path(paths, config);
-    if let Some(parent) = log_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("unable to create log directory {}", parent.display()))?;
-    }
-    rotate_logs_if_needed(&log_path, &config.logging)?;
-    // Ensure log file exists by creating it if needed
-    let _ = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .with_context(|| format!("unable to open log file {}", log_path.display()))?;
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .with_context(|| format!("unable to open log file {}", log_path.display()))?;
     let (level, warning) = parse_log_level(config.logging.level.as_deref());
     if let Some(warning) = warning {
         eprintln!("warning: {warning}");
@@ -365,13 +391,53 @@ fn init_logging(paths: &ConfigPaths, config: &Config) -> Result<()> {
         .with_target("lazycompass_mongo", level)
         .with_target("lazycompass_core", level)
         .with_default(LevelFilter::WARN);
+    let guard = WriteGuard::from_config(config);
+    let writer = if guard.ensure_write_allowed("write logs").is_err() {
+        BoxMakeWriter::new(stderr)
+    } else {
+        let log_path = log_file_path(paths, config);
+        if let Some(parent) = log_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("unable to create log directory {}", parent.display()))?;
+        }
+        rotate_logs_if_needed(&log_path, &config.logging)?;
+        // Ensure log file exists by creating it if needed
+        let _ = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .with_context(|| format!("unable to open log file {}", log_path.display()))?;
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .with_context(|| format!("unable to open log file {}", log_path.display()))?;
+        BoxMakeWriter::new(file)
+    };
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_ansi(false)
         .with_target(false)
-        .with_writer(file);
+        .with_writer(writer);
     let subscriber = tracing_subscriber::registry().with(filter).with(fmt_layer);
     tracing::subscriber::set_global_default(subscriber).context("unable to initialize logging")?;
     Ok(())
+}
+
+fn apply_cli_overrides(
+    config: &mut Config,
+    write_enabled: bool,
+    allow_pipeline_writes: bool,
+    allow_insecure: bool,
+) {
+    if write_enabled {
+        config.read_only = Some(false);
+    }
+    if allow_pipeline_writes {
+        config.allow_pipeline_writes = Some(true);
+    }
+    if allow_insecure {
+        config.allow_insecure = Some(true);
+    }
 }
 
 fn rotate_logs_if_needed(path: &Path, logging: &lazycompass_core::LoggingConfig) -> Result<()> {
@@ -457,7 +523,7 @@ fn parse_log_level(level: Option<&str>) -> (LevelFilter, Option<String>) {
 
 fn report_warnings(storage: &StorageSnapshot) {
     for warning in &storage.warnings {
-        eprintln!("warning: {}", redact_uris_in_text(warning));
+        eprintln!("warning: {}", redact_sensitive_text(warning));
     }
 }
 
@@ -675,14 +741,33 @@ fn run_upgrade(args: UpgradeArgs) -> Result<()> {
         .ok()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_INSTALL_URL.to_string());
+
+    eprintln!(
+        "Warning: running installer from {url}. For stricter verification, download install.sh and run locally."
+    );
+    eprintln!("Release assets are verified when checksum files are available.");
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let installer_path = env::temp_dir().join(format!("lazycompass_install_{nonce}.sh"));
+    let status = Command::new("curl")
+        .arg("-fsSL")
+        .arg("-o")
+        .arg(&installer_path)
+        .arg(&url)
+        .status()
+        .context("failed to download installer script")?;
+    if !status.success() {
+        anyhow::bail!("failed to download installer script");
+    }
     let status = Command::new("bash")
-        .arg("-c")
-        .arg("curl -fsSL \"$1\" | bash -s -- \"${@:2}\"")
-        .arg("bash")
-        .arg(url)
+        .arg(&installer_path)
         .args(&installer_args)
         .status()
         .context("failed to run installer from URL")?;
+    let _ = fs::remove_file(&installer_path);
     if !status.success() {
         anyhow::bail!("installer exited with non-zero status");
     }

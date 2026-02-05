@@ -1,9 +1,18 @@
 use anyhow::{Context, Result};
-use lazycompass_core::{Config, LoggingConfig, SavedAggregation, SavedQuery, TimeoutConfig};
+use lazycompass_core::{
+    Config, LoggingConfig, SavedAggregation, SavedQuery, TimeoutConfig,
+    connection_security_warnings, redact_sensitive_text,
+};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
 const APP_DIR: &str = "lazycompass";
+const DIR_MODE: u32 = 0o700;
+const FILE_MODE: u32 = 0o600;
 
 #[derive(Debug, Clone)]
 pub struct ConfigPaths {
@@ -67,9 +76,15 @@ pub struct StorageSnapshot {
 
 pub fn load_storage(paths: &ConfigPaths) -> Result<StorageSnapshot> {
     let config = load_config(paths)?;
+    load_storage_with_config(paths, config)
+}
+
+pub fn load_storage_with_config(paths: &ConfigPaths, config: Config) -> Result<StorageSnapshot> {
+    let mut warnings = connection_security_warnings(&config);
+    warnings.extend(permission_warnings(paths));
     let (queries, query_warnings) = load_saved_queries(paths)?;
     let (aggregations, aggregation_warnings) = load_saved_aggregations(paths)?;
-    let mut warnings = query_warnings;
+    warnings.extend(query_warnings);
     warnings.extend(aggregation_warnings);
     Ok(StorageSnapshot {
         config,
@@ -142,11 +157,10 @@ pub fn write_saved_query(
         anyhow::bail!("saved query '{}' already exists", query.name);
     }
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("unable to create directory {}", parent.display()))?;
+        ensure_secure_dir(parent)?;
     }
     let contents = toml::to_string_pretty(query).context("unable to serialize saved query")?;
-    fs::write(&path, contents)
+    write_secure_file(&path, &contents)
         .with_context(|| format!("unable to write saved query {}", path.display()))?;
     Ok(path)
 }
@@ -164,14 +178,149 @@ pub fn write_saved_aggregation(
         anyhow::bail!("saved aggregation '{}' already exists", aggregation.name);
     }
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("unable to create directory {}", parent.display()))?;
+        ensure_secure_dir(parent)?;
     }
     let contents =
         toml::to_string_pretty(aggregation).context("unable to serialize saved aggregation")?;
-    fs::write(&path, contents)
+    write_secure_file(&path, &contents)
         .with_context(|| format!("unable to write saved aggregation {}", path.display()))?;
     Ok(path)
+}
+
+fn ensure_secure_dir(path: &Path) -> Result<()> {
+    fs::create_dir_all(path)
+        .with_context(|| format!("unable to create directory {}", path.display()))?;
+    set_dir_permissions(path)?;
+    if let Some(parent) = path.parent()
+        && is_config_root_dir(parent)
+    {
+        set_dir_permissions(parent)?;
+    }
+    Ok(())
+}
+
+fn is_config_root_dir(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some(".lazycompass") | Some(APP_DIR)
+    )
+}
+
+fn write_secure_file(path: &Path, contents: &str) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(FILE_MODE)
+            .open(path)
+            .with_context(|| format!("unable to open file {}", path.display()))?;
+        file.write_all(contents.as_bytes())
+            .with_context(|| format!("unable to write file {}", path.display()))?;
+        set_file_permissions(path)?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, contents)
+            .with_context(|| format!("unable to write file {}", path.display()))?;
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn set_dir_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(DIR_MODE))
+        .with_context(|| format!("unable to set permissions on {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn set_dir_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_file_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(FILE_MODE))
+        .with_context(|| format!("unable to set permissions on {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn set_file_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn permission_warnings(paths: &ConfigPaths) -> Vec<String> {
+    let mut warnings = Vec::new();
+    append_permission_warning_dir(&paths.global_root, &mut warnings);
+    append_permission_warning_file(&paths.global_config_path(), &mut warnings);
+    if let Some(repo_root) = paths.repo_config_root() {
+        append_permission_warning_dir(&repo_root, &mut warnings);
+        let config_path = repo_root.join("config.toml");
+        append_permission_warning_file(&config_path, &mut warnings);
+        let queries_dir = repo_root.join("queries");
+        append_permission_warning_dir(&queries_dir, &mut warnings);
+        append_permission_warning_toml_files(&queries_dir, &mut warnings);
+        let aggregations_dir = repo_root.join("aggregations");
+        append_permission_warning_dir(&aggregations_dir, &mut warnings);
+        append_permission_warning_toml_files(&aggregations_dir, &mut warnings);
+    }
+    warnings
+}
+
+#[cfg(not(unix))]
+fn permission_warnings(_paths: &ConfigPaths) -> Vec<String> {
+    Vec::new()
+}
+
+#[cfg(unix)]
+fn append_permission_warning_dir(path: &Path, warnings: &mut Vec<String>) {
+    if !path.is_dir() {
+        return;
+    }
+    if let Ok(metadata) = fs::metadata(path) {
+        let mode = metadata.mode() & 0o777;
+        if (mode & 0o077) != 0 {
+            warnings.push(redact_sensitive_text(&format!(
+                "permission warning: directory {} has mode {:03o}, expected {:03o}",
+                path.display(),
+                mode,
+                DIR_MODE
+            )));
+        }
+    }
+}
+
+#[cfg(unix)]
+fn append_permission_warning_file(path: &Path, warnings: &mut Vec<String>) {
+    if !path.is_file() {
+        return;
+    }
+    if let Ok(metadata) = fs::metadata(path) {
+        let mode = metadata.mode() & 0o777;
+        if (mode & 0o077) != 0 {
+            warnings.push(redact_sensitive_text(&format!(
+                "permission warning: file {} has mode {:03o}, expected {:03o}",
+                path.display(),
+                mode,
+                FILE_MODE
+            )));
+        }
+    }
+}
+
+#[cfg(unix)]
+fn append_permission_warning_toml_files(dir: &Path, warnings: &mut Vec<String>) {
+    if let Ok(paths) = collect_toml_paths(dir) {
+        for path in paths {
+            append_permission_warning_file(&path, warnings);
+        }
+    }
 }
 
 fn find_repo_root(start: &Path) -> Option<PathBuf> {
@@ -323,6 +472,8 @@ fn merge_config(global: Config, repo: Config) -> Config {
         max_backups: repo.logging.max_backups.or(global.logging.max_backups),
     };
     let read_only = repo.read_only.or(global.read_only);
+    let allow_pipeline_writes = repo.allow_pipeline_writes.or(global.allow_pipeline_writes);
+    let allow_insecure = repo.allow_insecure.or(global.allow_insecure);
     let timeouts = TimeoutConfig {
         connect_ms: repo.timeouts.connect_ms.or(global.timeouts.connect_ms),
         query_ms: repo.timeouts.query_ms.or(global.timeouts.query_ms),
@@ -333,6 +484,8 @@ fn merge_config(global: Config, repo: Config) -> Config {
         theme,
         logging,
         read_only,
+        allow_pipeline_writes,
+        allow_insecure,
         timeouts,
     }
 }
@@ -432,7 +585,8 @@ fn load_queries_from_dir(dir: &Path) -> Result<(Vec<SavedQuery>, Vec<String>)> {
         match result {
             Ok(query) => queries.push(query),
             Err(error) => {
-                warnings.push(format!("skipping saved query {}: {error}", path.display()))
+                let warning = format!("skipping saved query {}: {error}", path.display());
+                warnings.push(redact_sensitive_text(&warning));
             }
         }
     }
@@ -460,10 +614,10 @@ fn load_aggregations_from_dir(dir: &Path) -> Result<(Vec<SavedAggregation>, Vec<
 
         match result {
             Ok(aggregation) => aggregations.push(aggregation),
-            Err(error) => warnings.push(format!(
-                "skipping saved aggregation {}: {error}",
-                path.display()
-            )),
+            Err(error) => {
+                let warning = format!("skipping saved aggregation {}: {error}", path.display());
+                warnings.push(redact_sensitive_text(&warning));
+            }
         }
     }
 
@@ -707,6 +861,8 @@ uri = "${{{missing_var}}}"
                 max_backups: None,
             },
             read_only: None,
+            allow_pipeline_writes: None,
+            allow_insecure: None,
             timeouts: TimeoutConfig::default(),
         };
 
@@ -871,6 +1027,54 @@ uri = "mongodb://two"
 
         let _ = write_saved_aggregation(&paths, &aggregation, false)?;
         assert!(write_saved_aggregation(&paths, &aggregation, false).is_err());
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn permission_warnings_detect_permissive_modes() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_root("perm_warn");
+        let global_root = root.join("global");
+        fs::create_dir_all(&global_root)?;
+        fs::set_permissions(&global_root, fs::Permissions::from_mode(0o755))?;
+        let global_config = global_root.join("config.toml");
+        write_file(&global_config, "read_only = true\n");
+        fs::set_permissions(&global_config, fs::Permissions::from_mode(0o644))?;
+
+        let repo_root = root.join("repo");
+        let repo_config_root = repo_root.join(".lazycompass");
+        fs::create_dir_all(repo_config_root.join("queries"))?;
+        fs::create_dir_all(repo_config_root.join("aggregations"))?;
+        fs::set_permissions(&repo_config_root, fs::Permissions::from_mode(0o755))?;
+        fs::set_permissions(
+            &repo_config_root.join("queries"),
+            fs::Permissions::from_mode(0o755),
+        )?;
+        let query_path = repo_config_root.join("queries/query.toml");
+        write_file(&query_path, "name = \"query\"\n");
+        fs::set_permissions(&query_path, fs::Permissions::from_mode(0o644))?;
+
+        let paths = ConfigPaths {
+            global_root,
+            repo_root: Some(repo_root),
+        };
+        let warnings = permission_warnings(&paths);
+
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("config.toml"))
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains(".lazycompass"))
+        );
+        assert!(warnings.iter().any(|warning| warning.contains("queries")));
 
         let _ = fs::remove_dir_all(&root);
         Ok(())

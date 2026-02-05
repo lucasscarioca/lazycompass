@@ -23,6 +23,8 @@ Validation rules:
 Defaults:
 
 - `read_only`: true
+- `allow_pipeline_writes`: false
+- `allow_insecure`: false
 - `timeouts.connect_ms`: 10000
 - `timeouts.query_ms`: 30000
 - `theme.name`: classic
@@ -31,11 +33,30 @@ Defaults:
 - `logging.max_size_mb`: 10
 - `logging.max_backups`: 3
 
+Write controls:
+
+- `read_only` blocks database mutations and local writes (saved queries/aggregations and log file writes).
+- `allow_pipeline_writes` allows `$out`/`$merge` stages when `read_only` is false.
+- `allow_insecure` silences warnings for connections missing TLS or authentication.
+- CLI overrides: `--write-enabled` disables `read_only`; `--allow-pipeline-writes` enables pipeline writes for the run; `--allow-insecure` silences TLS/auth warnings for the run.
+
+File permissions (Unix):
+
+- Config, saved query, saved aggregation, and temp editor files are written with `0600`.
+- Config and saved query/aggregation directories are created with `0700`.
+- LazyCompass warns when existing files or directories are more permissive.
+
+Editor command:
+
+- `$VISUAL`/`$EDITOR` are parsed as a command plus arguments (no shell expansion or pipes).
+
 ## Config schema
 
 ### Root
 
 - `read_only` (bool, optional)
+- `allow_pipeline_writes` (bool, optional)
+- `allow_insecure` (bool, optional)
 - `connections` (array of ConnectionSpec, optional)
 - `theme` (ThemeConfig, optional)
 - `logging` (LoggingConfig, optional)
@@ -71,6 +92,8 @@ If `logging.file` is a relative path, it is resolved under `~/.config/lazycompas
 
 ```toml
 read_only = true
+allow_pipeline_writes = false
+allow_insecure = false
 
 [[connections]]
 name = "primary"

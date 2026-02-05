@@ -6,6 +6,8 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+- Security: harden defaults and docs with read-only/write guards, pipeline blocking, TLS/auth warnings, logging redaction, permission checks, safe editor usage, and installer verification guidance.
+
 ## [0.5.0] - 2026-02-05
 
 - Docs: publish configuration and query format references.
