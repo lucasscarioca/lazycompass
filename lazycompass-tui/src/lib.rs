@@ -748,6 +748,7 @@ impl App {
                             self.set_error_message(&error);
                         }
                     } else {
+                        self.message = Some(format!("must type '{}' to confirm", required));
                         self.confirm = Some(confirm);
                     }
                 }
@@ -1484,7 +1485,7 @@ impl App {
             .constraints([
                 Constraint::Length(3),
                 Constraint::Min(2),
-                Constraint::Length(2),
+                Constraint::Length(3),
             ])
             .split(frame.area());
 
@@ -1732,7 +1733,7 @@ impl App {
                     required, input_display
                 )
             } else {
-                "y confirm  n cancel".to_string()
+                "y confirm  n cancel  Esc to cancel".to_string()
             };
             vec![
                 Line::from(Span::styled(

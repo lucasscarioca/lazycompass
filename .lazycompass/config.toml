@@ -1,3 +1,5 @@
+read_only = false
+
 [[connections]]
 name = "local"
 uri = "mongodb://localhost:27017"
