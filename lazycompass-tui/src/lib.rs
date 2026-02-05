@@ -371,6 +371,13 @@ struct ConfirmState {
 }
 
 #[derive(Debug, Clone)]
+struct EditorPromptState {
+    prompt: String,
+    input: String,
+    action: PendingEditorAction,
+}
+
+#[derive(Debug, Clone)]
 enum ConfirmAction {
     DeleteDocument {
         spec: DocumentDeleteSpec,
@@ -381,6 +388,27 @@ enum ConfirmAction {
     },
     OverwriteAggregation {
         aggregation: SavedAggregation,
+    },
+}
+
+#[derive(Debug, Clone)]
+enum PendingEditorAction {
+    Insert {
+        connection: String,
+        database: String,
+        collection: String,
+    },
+    Edit {
+        connection: String,
+        database: String,
+        collection: String,
+        document: Document,
+    },
+    SaveQuery {
+        template: SavedQuery,
+    },
+    SaveAggregation {
+        template: SavedAggregation,
     },
 }
 
@@ -445,6 +473,8 @@ struct App {
     help_visible: bool,
     message: Option<String>,
     confirm: Option<ConfirmState>,
+    editor_prompt: Option<EditorPromptState>,
+    editor_command: Option<String>,
     warnings: VecDeque<String>,
     load_tx: Sender<LoadResult>,
     load_rx: Receiver<LoadResult>,
@@ -501,6 +531,8 @@ impl App {
             help_visible: false,
             message,
             confirm: None,
+            editor_prompt: None,
+            editor_command: None,
             warnings,
             load_tx,
             load_rx,
@@ -648,6 +680,9 @@ impl App {
         key: KeyEvent,
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> Result<bool> {
+        if self.editor_prompt.is_some() {
+            return self.handle_editor_prompt_key(key, terminal);
+        }
         if self.confirm.is_some() {
             return self.handle_confirm_key(key, terminal);
         }
@@ -785,6 +820,49 @@ impl App {
         Ok(false)
     }
 
+    fn handle_editor_prompt_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<bool> {
+        let Some(mut prompt) = self.editor_prompt.take() else {
+            return Ok(false);
+        };
+
+        match key.code {
+            KeyCode::Esc => {
+                self.message = Some("cancelled".to_string());
+            }
+            KeyCode::Backspace => {
+                prompt.input.pop();
+                self.editor_prompt = Some(prompt);
+            }
+            KeyCode::Enter => {
+                let editor = prompt.input.trim();
+                if editor.is_empty() {
+                    self.editor_prompt = Some(prompt);
+                } else {
+                    self.editor_command = Some(editor.to_string());
+                    if let Err(error) = self.perform_editor_action(prompt.action, terminal) {
+                        self.set_error_message(&error);
+                    }
+                }
+            }
+            KeyCode::Char(ch) => {
+                if !ch.is_control() {
+                    prompt.input.push(ch);
+                }
+                self.editor_prompt = Some(prompt);
+            }
+            _ => {
+                self.editor_prompt = Some(prompt);
+            }
+        }
+
+        self.last_g = false;
+        Ok(false)
+    }
+
     fn perform_confirm_action(&mut self, action: ConfirmAction) -> Result<()> {
         if self.read_only && matches!(action, ConfirmAction::DeleteDocument { .. }) {
             self.message = Some("read-only mode: write operations are disabled".to_string());
@@ -879,20 +957,15 @@ impl App {
         }
         let result = (|| -> Result<()> {
             let (connection, database, collection) = self.selected_context()?;
-            let contents = self.open_editor(terminal, "insert", "{}")?;
-            let document = parse_json_document("document", &contents)?;
-            let spec = DocumentInsertSpec {
-                connection: Some(connection),
+            let action = PendingEditorAction::Insert {
+                connection,
                 database,
                 collection,
-                document,
             };
-            let inserted_id = self
-                .runtime
-                .block_on(self.executor.insert_document(&self.storage.config, &spec))?;
-            self.reload_documents_after_change()?;
-            self.message = Some(format!("inserted document {}", format_bson(&inserted_id)));
-            Ok(())
+            let Some(_) = self.ensure_editor_command(action.clone())? else {
+                return Ok(());
+            };
+            self.perform_editor_action(action, terminal)
         })();
 
         if let Err(error) = result {
@@ -911,35 +984,16 @@ impl App {
         let result = (|| -> Result<()> {
             let (connection, database, collection) = self.selected_context()?;
             let document = self.selected_document()?.clone();
-            let original_id = document_id(&document)?;
-            let initial =
-                serde_json::to_string_pretty(&document).context("unable to serialize document")?;
-            let contents = self.open_editor(terminal, "edit", &initial)?;
-            let mut updated = parse_json_document("document", &contents)?;
-            let mut id_changed = false;
-            match updated.get("_id") {
-                Some(value) if value == &original_id => {}
-                _ => {
-                    updated.insert("_id", original_id.clone());
-                    id_changed = true;
-                }
-            }
-            let spec = DocumentReplaceSpec {
-                connection: Some(connection),
+            let action = PendingEditorAction::Edit {
+                connection,
                 database,
                 collection,
-                id: original_id,
-                document: updated,
+                document,
             };
-            self.runtime
-                .block_on(self.executor.replace_document(&self.storage.config, &spec))?;
-            self.reload_documents_after_change()?;
-            self.message = Some(if id_changed {
-                "updated document (kept original _id)".to_string()
-            } else {
-                "updated document".to_string()
-            });
-            Ok(())
+            let Some(_) = self.ensure_editor_command(action.clone())? else {
+                return Ok(());
+            };
+            self.perform_editor_action(action, terminal)
         })();
 
         if let Err(error) = result {
@@ -965,26 +1019,11 @@ impl App {
                 limit: None,
                 notes: None,
             };
-            let initial =
-                toml::to_string_pretty(&template).context("unable to render query template")?;
-            let contents = self.open_editor(terminal, "query", &initial)?;
-            let query: SavedQuery =
-                toml::from_str(&contents).context("invalid TOML for saved query")?;
-            query.validate().context("invalid saved query")?;
-            let path = saved_query_path(&self.paths, &query.name)?;
-            if path.exists() {
-                self.confirm = Some(ConfirmState {
-                    prompt: format!("overwrite saved query '{}'? (y/n)", query.name),
-                    action: ConfirmAction::OverwriteQuery { query },
-                    input: String::new(),
-                    required: None,
-                });
+            let action = PendingEditorAction::SaveQuery { template };
+            let Some(_) = self.ensure_editor_command(action.clone())? else {
                 return Ok(());
-            }
-            let path = write_saved_query(&self.paths, &query, false)?;
-            self.upsert_query(query);
-            self.message = Some(format!("saved query to {}", path.display()));
-            Ok(())
+            };
+            self.perform_editor_action(action, terminal)
         })();
 
         if let Err(error) = result {
@@ -1010,28 +1049,11 @@ impl App {
                 pipeline: "[]".to_string(),
                 notes: None,
             };
-            let initial = toml::to_string_pretty(&template)
-                .context("unable to render aggregation template")?;
-            let contents = self.open_editor(terminal, "aggregation", &initial)?;
-            let aggregation: SavedAggregation =
-                toml::from_str(&contents).context("invalid TOML for saved aggregation")?;
-            aggregation
-                .validate()
-                .context("invalid saved aggregation")?;
-            let path = saved_aggregation_path(&self.paths, &aggregation.name)?;
-            if path.exists() {
-                self.confirm = Some(ConfirmState {
-                    prompt: format!("overwrite saved aggregation '{}'? (y/n)", aggregation.name),
-                    action: ConfirmAction::OverwriteAggregation { aggregation },
-                    input: String::new(),
-                    required: None,
-                });
+            let action = PendingEditorAction::SaveAggregation { template };
+            let Some(_) = self.ensure_editor_command(action.clone())? else {
                 return Ok(());
-            }
-            let path = write_saved_aggregation(&self.paths, &aggregation, false)?;
-            self.upsert_aggregation(aggregation);
-            self.message = Some(format!("saved aggregation to {}", path.display()));
-            Ok(())
+            };
+            self.perform_editor_action(action, terminal)
         })();
 
         if let Err(error) = result {
@@ -1040,19 +1062,202 @@ impl App {
         Ok(())
     }
 
+    fn ensure_editor_command(&mut self, action: PendingEditorAction) -> Result<Option<String>> {
+        if let Some(editor) = &self.editor_command {
+            return Ok(Some(editor.clone()));
+        }
+
+        match resolve_editor() {
+            Ok(editor) => {
+                self.editor_command = Some(editor.clone());
+                Ok(Some(editor))
+            }
+            Err(_) => {
+                self.editor_prompt = Some(EditorPromptState {
+                    prompt: "editor command required (set $VISUAL/$EDITOR or enter here)"
+                        .to_string(),
+                    input: String::new(),
+                    action,
+                });
+                Ok(None)
+            }
+        }
+    }
+
+    fn perform_editor_action(
+        &mut self,
+        action: PendingEditorAction,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<()> {
+        match action {
+            PendingEditorAction::Insert {
+                connection,
+                database,
+                collection,
+            } => self.insert_document_with_context(terminal, connection, database, collection),
+            PendingEditorAction::Edit {
+                connection,
+                database,
+                collection,
+                document,
+            } => self
+                .edit_document_with_context(terminal, connection, database, collection, document),
+            PendingEditorAction::SaveQuery { template } => {
+                self.save_query_with_template(terminal, template)
+            }
+            PendingEditorAction::SaveAggregation { template } => {
+                self.save_aggregation_with_template(terminal, template)
+            }
+        }
+    }
+
+    fn insert_document_with_context(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+        connection: String,
+        database: String,
+        collection: String,
+    ) -> Result<()> {
+        let editor = self
+            .editor_command
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("editor command missing"))?;
+        let contents = self.open_editor(terminal, editor, "insert", "{}")?;
+        let document = parse_json_document("document", &contents)?;
+        let spec = DocumentInsertSpec {
+            connection: Some(connection),
+            database,
+            collection,
+            document,
+        };
+        let inserted_id = self
+            .runtime
+            .block_on(self.executor.insert_document(&self.storage.config, &spec))?;
+        self.reload_documents_after_change()?;
+        self.message = Some(format!("inserted document {}", format_bson(&inserted_id)));
+        Ok(())
+    }
+
+    fn edit_document_with_context(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+        connection: String,
+        database: String,
+        collection: String,
+        document: Document,
+    ) -> Result<()> {
+        let editor = self
+            .editor_command
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("editor command missing"))?;
+        let original_id = document_id(&document)?;
+        let initial =
+            serde_json::to_string_pretty(&document).context("unable to serialize document")?;
+        let contents = self.open_editor(terminal, editor, "edit", &initial)?;
+        let mut updated = parse_json_document("document", &contents)?;
+        let mut id_changed = false;
+        match updated.get("_id") {
+            Some(value) if value == &original_id => {}
+            _ => {
+                updated.insert("_id", original_id.clone());
+                id_changed = true;
+            }
+        }
+        let spec = DocumentReplaceSpec {
+            connection: Some(connection),
+            database,
+            collection,
+            id: original_id,
+            document: updated,
+        };
+        self.runtime
+            .block_on(self.executor.replace_document(&self.storage.config, &spec))?;
+        self.reload_documents_after_change()?;
+        self.message = Some(if id_changed {
+            "updated document (kept original _id)".to_string()
+        } else {
+            "updated document".to_string()
+        });
+        Ok(())
+    }
+
+    fn save_query_with_template(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+        template: SavedQuery,
+    ) -> Result<()> {
+        let editor = self
+            .editor_command
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("editor command missing"))?;
+        let initial =
+            toml::to_string_pretty(&template).context("unable to render query template")?;
+        let contents = self.open_editor(terminal, editor, "query", &initial)?;
+        let query: SavedQuery =
+            toml::from_str(&contents).context("invalid TOML for saved query")?;
+        query.validate().context("invalid saved query")?;
+        let path = saved_query_path(&self.paths, &query.name)?;
+        if path.exists() {
+            self.confirm = Some(ConfirmState {
+                prompt: format!("overwrite saved query '{}'? (y/n)", query.name),
+                action: ConfirmAction::OverwriteQuery { query },
+                input: String::new(),
+                required: None,
+            });
+            return Ok(());
+        }
+        let path = write_saved_query(&self.paths, &query, false)?;
+        self.upsert_query(query);
+        self.message = Some(format!("saved query to {}", path.display()));
+        Ok(())
+    }
+
+    fn save_aggregation_with_template(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+        template: SavedAggregation,
+    ) -> Result<()> {
+        let editor = self
+            .editor_command
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("editor command missing"))?;
+        let initial =
+            toml::to_string_pretty(&template).context("unable to render aggregation template")?;
+        let contents = self.open_editor(terminal, editor, "aggregation", &initial)?;
+        let aggregation: SavedAggregation =
+            toml::from_str(&contents).context("invalid TOML for saved aggregation")?;
+        aggregation
+            .validate()
+            .context("invalid saved aggregation")?;
+        let path = saved_aggregation_path(&self.paths, &aggregation.name)?;
+        if path.exists() {
+            self.confirm = Some(ConfirmState {
+                prompt: format!("overwrite saved aggregation '{}'? (y/n)", aggregation.name),
+                action: ConfirmAction::OverwriteAggregation { aggregation },
+                input: String::new(),
+                required: None,
+            });
+            return Ok(());
+        }
+        let path = write_saved_aggregation(&self.paths, &aggregation, false)?;
+        self.upsert_aggregation(aggregation);
+        self.message = Some(format!("saved aggregation to {}", path.display()));
+        Ok(())
+    }
+
     fn open_editor(
         &self,
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+        editor: &str,
         label: &str,
         initial: &str,
     ) -> Result<String> {
-        let editor = resolve_editor()?;
         let path = editor_temp_path(label);
         fs::write(&path, initial)
             .with_context(|| format!("unable to write temporary file {}", path.display()))?;
 
         suspend_terminal(terminal)?;
-        let status = run_editor_command(&editor, &path);
+        let status = run_editor_command(editor, &path);
         let resume = resume_terminal(terminal);
         let status = match status {
             Ok(status) => status,
@@ -1520,9 +1725,31 @@ impl App {
                 );
             }
             Screen::Databases => {
+                let panes = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(20), Constraint::Percentage(80)])
+                    .split(layout[1]);
+                let connections = self
+                    .storage
+                    .config
+                    .connections
+                    .iter()
+                    .map(connection_label)
+                    .collect::<Vec<_>>();
                 self.render_list(
                     frame,
-                    layout[1],
+                    panes[0],
+                    ListView {
+                        title: "Connections",
+                        items: &connections,
+                        selected: self.connection_index,
+                        load_state: &LoadState::Idle,
+                        loading_label: "loading connections...",
+                    },
+                );
+                self.render_list(
+                    frame,
+                    panes[1],
                     ListView {
                         title: "Databases",
                         items: &self.database_items,
@@ -1533,9 +1760,24 @@ impl App {
                 );
             }
             Screen::Collections => {
+                let panes = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(20), Constraint::Percentage(80)])
+                    .split(layout[1]);
                 self.render_list(
                     frame,
-                    layout[1],
+                    panes[0],
+                    ListView {
+                        title: "Databases",
+                        items: &self.database_items,
+                        selected: self.database_index,
+                        load_state: &self.database_state,
+                        loading_label: "loading databases...",
+                    },
+                );
+                self.render_list(
+                    frame,
+                    panes[1],
                     ListView {
                         title: "Collections",
                         items: &self.collection_items,
@@ -1546,6 +1788,21 @@ impl App {
                 );
             }
             Screen::Documents => {
+                let panes = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(20), Constraint::Percentage(80)])
+                    .split(layout[1]);
+                self.render_list(
+                    frame,
+                    panes[0],
+                    ListView {
+                        title: "Collections",
+                        items: &self.collection_items,
+                        selected: self.collection_index,
+                        load_state: &self.collection_state,
+                        loading_label: "loading collections...",
+                    },
+                );
                 let items = self
                     .documents
                     .iter()
@@ -1554,7 +1811,7 @@ impl App {
                 let title = format!("Documents (page {})", self.document_page + 1);
                 self.render_list(
                     frame,
-                    layout[1],
+                    panes[1],
                     ListView {
                         title: &title,
                         items: &items,
@@ -1565,6 +1822,27 @@ impl App {
                 );
             }
             Screen::DocumentView => {
+                let panes = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(20), Constraint::Percentage(80)])
+                    .split(layout[1]);
+                let items = self
+                    .documents
+                    .iter()
+                    .map(document_preview)
+                    .collect::<Vec<_>>();
+                let title = format!("Documents (page {})", self.document_page + 1);
+                self.render_list(
+                    frame,
+                    panes[0],
+                    ListView {
+                        title: &title,
+                        items: &items,
+                        selected: self.document_index,
+                        load_state: &self.document_state,
+                        loading_label: "loading documents...",
+                    },
+                );
                 let max_scroll = self.max_document_scroll();
                 if self.document_scroll > max_scroll {
                     self.document_scroll = max_scroll;
@@ -1587,7 +1865,7 @@ impl App {
                     )
                     .wrap(Wrap { trim: false })
                     .scroll((self.document_scroll, 0));
-                frame.render_widget(body, layout[1]);
+                frame.render_widget(body, panes[1]);
             }
         }
 
@@ -1721,7 +1999,22 @@ impl App {
     fn footer_lines(&self) -> Vec<Line<'static>> {
         let hint = self.hint_line();
 
-        if let Some(confirm) = &self.confirm {
+        if let Some(editor_prompt) = &self.editor_prompt {
+            let input_display = if editor_prompt.input.is_empty() {
+                "[type below]".to_string()
+            } else {
+                format!("'{}'", editor_prompt.input)
+            };
+            vec![
+                Line::from(Span::styled(
+                    editor_prompt.prompt.clone(),
+                    self.theme.warning_style(),
+                )),
+                Line::from(format!(
+                    "Enter to launch editor (current: {input_display})  Esc to cancel"
+                )),
+            ]
+        } else if let Some(confirm) = &self.confirm {
             let action_line = if let Some(required) = confirm.required {
                 let input_display = if confirm.input.is_empty() {
                     "[type below]".to_string()
@@ -1843,7 +2136,10 @@ fn keys_for_actions(actions: &[KeyAction]) -> String {
 }
 
 fn resolve_theme(config: &Config) -> (Theme, Option<String>) {
-    let name = config.theme.name.as_deref().unwrap_or("classic");
+    let name = config.theme.name.as_deref().unwrap_or_default();
+    if name.trim().is_empty() {
+        return (THEME_CLASSIC, None);
+    }
     match theme_by_name(name) {
         Some(theme) => (theme, None),
         None => (
