@@ -10,19 +10,19 @@ LazyCompass is pre-1.0. Breaking changes may happen in minor releases until 1.0;
 
 ## Installation
 
-From source (recommended for now, requires Rust toolchain):
+Prebuilt binaries from GitHub releases (no Rust required):
 
 ```bash
 ./install.sh
 ```
 
-Install via curl:
+Install via curl (no Rust required):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lucasscarioca/lazycompass/main/install.sh | bash
 ```
 
-Or via Cargo directly:
+Build from source or install via Cargo (requires Rust toolchain):
 
 ```bash
 cargo install --path . -p lazycompass --locked
