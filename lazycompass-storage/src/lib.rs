@@ -342,10 +342,74 @@ fn normalize_saved_name(name: &str) -> Result<String> {
     if trimmed.is_empty() {
         anyhow::bail!("name cannot be empty");
     }
-    if trimmed.contains('/') || trimmed.contains('\\') {
-        anyhow::bail!("name cannot contain path separators");
+
+    // Convert to lowercase and build safe ASCII slug
+    let mut result = String::with_capacity(trimmed.len());
+    let mut prev_was_dash = false;
+
+    for ch in trimmed.to_ascii_lowercase().chars() {
+        match ch {
+            // Keep alphanumeric and allowed separators
+            'a'..='z' | '0'..='9' => {
+                result.push(ch);
+                prev_was_dash = false;
+            }
+            // Collapse whitespace and special chars to single dash
+            ' ' | '\t' | '\n' | '\r' | '-' | '_' | '.' | ',' | ';' | ':' | '!' | '?' | '@'
+            | '#' | '$' | '%' | '^' | '&' | '*' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '+'
+            | '=' | '<' | '>' | '/' | '\\' | '"' | '\'' | '`' | '~' => {
+                if !prev_was_dash && !result.is_empty() {
+                    result.push('-');
+                    prev_was_dash = true;
+                }
+            }
+            // Skip other characters entirely
+            _ => {}
+        }
     }
-    Ok(trimmed.to_string())
+
+    // Trim trailing dash if present
+    if result.ends_with('-') {
+        result.pop();
+    }
+
+    // Ensure non-empty after sanitization
+    if result.is_empty() {
+        anyhow::bail!("name must contain at least one alphanumeric character");
+    }
+
+    // Reject reserved Windows names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
+    let upper = result.to_ascii_uppercase();
+    let reserved = matches!(
+        upper.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    );
+    if reserved {
+        anyhow::bail!("name cannot be a reserved filename");
+    }
+
+    Ok(result)
 }
 
 fn load_queries_from_dir(dir: &Path) -> Result<(Vec<SavedQuery>, Vec<String>)> {

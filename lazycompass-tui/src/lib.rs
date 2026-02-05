@@ -460,7 +460,7 @@ struct App {
 }
 
 impl App {
-    fn new(paths: ConfigPaths, storage: StorageSnapshot) -> Result<Self> {
+    fn new(paths: ConfigPaths, storage: StorageSnapshot, read_only: bool) -> Result<Self> {
         let runtime = Runtime::new().context("unable to start async runtime")?;
         let (load_tx, load_rx) = mpsc::channel();
         let (theme, theme_warning) = resolve_theme(&storage.config);
@@ -478,7 +478,6 @@ impl App {
         } else {
             None
         };
-        let read_only = storage.config.read_only();
 
         Ok(Self {
             paths,
@@ -653,9 +652,11 @@ impl App {
             return self.handle_confirm_key(key, terminal);
         }
 
+        // Clear warnings and messages on any non-confirm keypress
         if !self.warnings.is_empty() {
             self.warnings.pop_front();
         }
+        self.message = None;
 
         if self.help_visible {
             if key.code == KeyCode::Esc {
@@ -1721,9 +1722,14 @@ impl App {
 
         if let Some(confirm) = &self.confirm {
             let action_line = if let Some(required) = confirm.required {
+                let input_display = if confirm.input.is_empty() {
+                    "[type below]".to_string()
+                } else {
+                    format!("'{}'", confirm.input)
+                };
                 format!(
-                    "type '{}' then Enter: {}  Esc cancel",
-                    required, confirm.input
+                    "Confirm: type '{}' then press Enter (currently: {})  Esc to cancel",
+                    required, input_display
                 )
             } else {
                 "y confirm  n cancel".to_string()
@@ -1879,9 +1885,8 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 pub fn run(read_only: bool) -> Result<()> {
     let cwd = std::env::current_dir().context("unable to resolve current directory")?;
     let paths = ConfigPaths::resolve_from(&cwd)?;
-    let mut storage = load_storage(&paths)?;
-    storage.config.read_only = Some(read_only);
-    let mut app = App::new(paths, storage)?;
+    let storage = load_storage(&paths)?;
+    let mut app = App::new(paths, storage, read_only)?;
 
     let mut terminal = setup_terminal()?;
     let result = app.run(&mut terminal);

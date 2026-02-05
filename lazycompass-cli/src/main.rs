@@ -343,6 +343,12 @@ fn init_logging(paths: &ConfigPaths, config: &Config) -> Result<()> {
             .with_context(|| format!("unable to create log directory {}", parent.display()))?;
     }
     rotate_logs_if_needed(&log_path, &config.logging)?;
+    // Ensure log file exists by creating it if needed
+    let _ = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .with_context(|| format!("unable to open log file {}", log_path.display()))?;
     let file = fs::OpenOptions::new()
         .create(true)
         .append(true)
