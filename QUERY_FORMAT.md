@@ -7,6 +7,8 @@ Saved queries and aggregations are read from the repo only:
 
 Filenames are derived from the `name` field (slugged). Invalid files are skipped with warnings.
 
+Saved queries and aggregations can be run from the TUI or CLI.
+
 JSON fields are stored as strings for copy/paste parity with MongoDB syntax. MongoDB Extended JSON (relaxed or canonical) is supported.
 
 ## SavedQuery

@@ -13,7 +13,8 @@ use lazycompass_mongo::{
     MongoExecutor, parse_json_document,
 };
 use lazycompass_storage::{
-    ConfigPaths, StorageSnapshot, load_storage_with_config, saved_aggregation_path,
+    ConfigPaths, StorageSnapshot, append_connection_to_global_config,
+    append_connection_to_repo_config, load_storage_with_config, saved_aggregation_path,
     saved_query_path, write_saved_aggregation, write_saved_query,
 };
 use ratatui::Terminal;
@@ -49,7 +50,11 @@ enum KeyAction {
     Delete,
     SaveQuery,
     SaveAggregation,
+    RunSavedQuery,
+    RunSavedAggregation,
+    ClearApplied,
     ToggleHelp,
+    AddConnection,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -152,6 +157,21 @@ const KEY_BINDINGS: &[KeyBinding] = &[
         modifiers: KeyModifiers::SHIFT,
     },
     KeyBinding {
+        action: KeyAction::RunSavedQuery,
+        code: KeyCode::Char('r'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::RunSavedAggregation,
+        code: KeyCode::Char('a'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::ClearApplied,
+        code: KeyCode::Char('c'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
         action: KeyAction::ToggleHelp,
         code: KeyCode::Char('?'),
         modifiers: KeyModifiers::NONE,
@@ -160,6 +180,11 @@ const KEY_BINDINGS: &[KeyBinding] = &[
         action: KeyAction::ToggleHelp,
         code: KeyCode::Char('?'),
         modifiers: KeyModifiers::SHIFT,
+    },
+    KeyBinding {
+        action: KeyAction::AddConnection,
+        code: KeyCode::Char('n'),
+        modifiers: KeyModifiers::NONE,
     },
 ];
 
@@ -172,6 +197,7 @@ const HINT_PAGE: &[KeyAction] = &[KeyAction::PreviousPage, KeyAction::NextPage];
 const HINT_EDITING: &[KeyAction] = &[KeyAction::Insert, KeyAction::Edit, KeyAction::Delete];
 const HINT_EDIT_DELETE: &[KeyAction] = &[KeyAction::Edit, KeyAction::Delete];
 const HINT_SAVE: &[KeyAction] = &[KeyAction::SaveQuery, KeyAction::SaveAggregation];
+const HINT_RUN: &[KeyAction] = &[KeyAction::RunSavedQuery, KeyAction::RunSavedAggregation];
 const HINT_HELP: &[KeyAction] = &[KeyAction::ToggleHelp];
 const HINT_QUIT: &[KeyAction] = &[KeyAction::Quit];
 
@@ -187,6 +213,10 @@ const CONNECTION_HINTS: &[HintGroup] = &[
     HintGroup {
         actions: HINT_TOP_BOTTOM,
         label: "top/bottom",
+    },
+    HintGroup {
+        actions: &[KeyAction::AddConnection],
+        label: "new connection",
     },
     HintGroup {
         actions: HINT_HELP,
@@ -249,8 +279,68 @@ const DOCUMENT_HINTS: &[HintGroup] = &[
         label: "save query/agg",
     },
     HintGroup {
+        actions: HINT_RUN,
+        label: "run saved",
+    },
+    HintGroup {
         actions: HINT_PAGE,
         label: "page",
+    },
+    HintGroup {
+        actions: HINT_TOP_BOTTOM,
+        label: "top/bottom",
+    },
+    HintGroup {
+        actions: HINT_HELP,
+        label: "help",
+    },
+    HintGroup {
+        actions: HINT_QUIT,
+        label: "quit",
+    },
+];
+
+const SAVED_QUERY_HINTS: &[HintGroup] = &[
+    HintGroup {
+        actions: HINT_MOVE,
+        label: "move",
+    },
+    HintGroup {
+        actions: HINT_FORWARD,
+        label: "run",
+    },
+    HintGroup {
+        actions: HINT_BACK,
+        label: "cancel",
+    },
+    HintGroup {
+        actions: HINT_TOP_BOTTOM,
+        label: "top/bottom",
+    },
+    HintGroup {
+        actions: HINT_HELP,
+        label: "help",
+    },
+    HintGroup {
+        actions: HINT_QUIT,
+        label: "quit",
+    },
+];
+
+const SAVED_AGGREGATION_HINTS: &[HintGroup] = SAVED_QUERY_HINTS;
+
+const ADD_CONNECTION_SCOPE_HINTS: &[HintGroup] = &[
+    HintGroup {
+        actions: HINT_MOVE,
+        label: "move",
+    },
+    HintGroup {
+        actions: HINT_FORWARD,
+        label: "select",
+    },
+    HintGroup {
+        actions: HINT_BACK,
+        label: "cancel",
     },
     HintGroup {
         actions: HINT_TOP_BOTTOM,
@@ -362,6 +452,9 @@ enum Screen {
     Collections,
     Documents,
     DocumentView,
+    SavedQuerySelect,
+    SavedAggregationSelect,
+    AddConnectionScopeSelect,
 }
 
 #[derive(Debug, Clone)]
@@ -412,6 +505,17 @@ enum PendingEditorAction {
     SaveAggregation {
         template: SavedAggregation,
     },
+    AddConnection {
+        scope: ConnectionPersistenceScope,
+        template: ConnectionSpec,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectionPersistenceScope {
+    SessionOnly,
+    Repo,
+    Global,
 }
 
 #[derive(Debug, Clone)]
@@ -435,6 +539,16 @@ enum LoadResult {
         id: u64,
         result: Result<Vec<Document>, String>,
     },
+    SavedQuery {
+        id: u64,
+        name: String,
+        result: Result<Vec<Document>, String>,
+    },
+    SavedAggregation {
+        id: u64,
+        name: String,
+        result: Result<Vec<Document>, String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -443,6 +557,13 @@ enum DocumentLoadReason {
     NavigateNext,
     NavigatePrevious,
     Refresh,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DocumentResultSource {
+    Collection,
+    SavedQuery { name: String },
+    SavedAggregation { name: String },
 }
 
 struct ListView<'a> {
@@ -484,11 +605,19 @@ struct App {
     database_load_id: Option<u64>,
     collection_load_id: Option<u64>,
     document_load_id: Option<u64>,
+    saved_query_load_id: Option<u64>,
+    saved_agg_load_id: Option<u64>,
     database_state: LoadState,
     collection_state: LoadState,
     document_state: LoadState,
+    saved_query_state: LoadState,
+    saved_agg_state: LoadState,
     document_pending_index: Option<usize>,
     document_load_reason: DocumentLoadReason,
+    document_result_source: DocumentResultSource,
+    saved_query_index: Option<usize>,
+    saved_agg_index: Option<usize>,
+    add_connection_scope_index: Option<usize>,
 }
 
 impl App {
@@ -542,11 +671,19 @@ impl App {
             database_load_id: None,
             collection_load_id: None,
             document_load_id: None,
+            saved_query_load_id: None,
+            saved_agg_load_id: None,
             database_state: LoadState::Idle,
             collection_state: LoadState::Idle,
             document_state: LoadState::Idle,
+            saved_query_state: LoadState::Idle,
+            saved_agg_state: LoadState::Idle,
             document_pending_index: None,
             document_load_reason: DocumentLoadReason::Refresh,
+            document_result_source: DocumentResultSource::Collection,
+            saved_query_index: None,
+            saved_agg_index: None,
+            add_connection_scope_index: Some(0),
         })
     }
 
@@ -674,6 +811,71 @@ impl App {
                     }
                 }
             }
+            LoadResult::SavedQuery { id, name, result } => {
+                if self.saved_query_load_id != Some(id) {
+                    return;
+                }
+                self.saved_query_load_id = None;
+                self.saved_query_state = LoadState::Idle;
+                match result {
+                    Ok(documents) => {
+                        self.documents = documents;
+                        self.document_index = if self.documents.is_empty() {
+                            None
+                        } else {
+                            Some(0)
+                        };
+                        self.document_page = 0;
+                        self.document_lines.clear();
+                        self.document_scroll = 0;
+                        self.document_result_source = DocumentResultSource::SavedQuery { name };
+                        self.screen = Screen::Documents;
+                        self.message = Some(format!(
+                            "query returned {} document(s)",
+                            self.documents.len()
+                        ));
+                    }
+                    Err(error) => {
+                        let message =
+                            format_error_message(&error, is_network_error_message(&error));
+                        self.saved_query_state = LoadState::Failed(message.clone());
+                        self.message = Some(message);
+                    }
+                }
+            }
+            LoadResult::SavedAggregation { id, name, result } => {
+                if self.saved_agg_load_id != Some(id) {
+                    return;
+                }
+                self.saved_agg_load_id = None;
+                self.saved_agg_state = LoadState::Idle;
+                match result {
+                    Ok(documents) => {
+                        self.documents = documents;
+                        self.document_index = if self.documents.is_empty() {
+                            None
+                        } else {
+                            Some(0)
+                        };
+                        self.document_page = 0;
+                        self.document_lines.clear();
+                        self.document_scroll = 0;
+                        self.document_result_source =
+                            DocumentResultSource::SavedAggregation { name };
+                        self.screen = Screen::Documents;
+                        self.message = Some(format!(
+                            "aggregation returned {} document(s)",
+                            self.documents.len()
+                        ));
+                    }
+                    Err(error) => {
+                        let message =
+                            format_error_message(&error, is_network_error_message(&error));
+                        self.saved_agg_state = LoadState::Failed(message.clone());
+                        self.message = Some(message);
+                    }
+                }
+            }
         }
     }
 
@@ -745,7 +947,7 @@ impl App {
             KeyAction::MoveDown => self.move_down(),
             KeyAction::MoveUp => self.move_up(),
             KeyAction::Back => self.go_back(),
-            KeyAction::Forward => self.go_forward()?,
+            KeyAction::Forward => self.go_forward(terminal)?,
             KeyAction::GoTop => self.go_top(),
             KeyAction::GoBottom => self.go_bottom(),
             KeyAction::NextPage => self.next_page()?,
@@ -755,7 +957,11 @@ impl App {
             KeyAction::Delete => self.request_delete_document()?,
             KeyAction::SaveQuery => self.save_query(terminal)?,
             KeyAction::SaveAggregation => self.save_aggregation(terminal)?,
+            KeyAction::RunSavedQuery => self.run_saved_query()?,
+            KeyAction::RunSavedAggregation => self.run_saved_aggregation()?,
+            KeyAction::ClearApplied => self.clear_applied_documents()?,
             KeyAction::ToggleHelp => self.help_visible = !self.help_visible,
+            KeyAction::AddConnection => self.start_add_connection()?,
         }
 
         Ok(false)
@@ -1079,6 +1285,180 @@ impl App {
         Ok(())
     }
 
+    fn run_saved_query(&mut self) -> Result<()> {
+        if self.screen != Screen::Documents {
+            return Ok(());
+        }
+        if self.storage.queries.is_empty() {
+            self.message = Some("no saved queries".to_string());
+            return Ok(());
+        }
+        self.saved_query_index = if self.storage.queries.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
+        self.saved_query_state = LoadState::Idle;
+        self.screen = Screen::SavedQuerySelect;
+        Ok(())
+    }
+
+    fn run_saved_aggregation(&mut self) -> Result<()> {
+        if self.screen != Screen::Documents {
+            return Ok(());
+        }
+        if self.storage.aggregations.is_empty() {
+            self.message = Some("no saved aggregations".to_string());
+            return Ok(());
+        }
+        self.saved_agg_index = if self.storage.aggregations.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
+        self.saved_agg_state = LoadState::Idle;
+        self.screen = Screen::SavedAggregationSelect;
+        Ok(())
+    }
+
+    fn start_add_connection(&mut self) -> Result<()> {
+        if self.screen != Screen::Connections {
+            return Ok(());
+        }
+        self.add_connection_scope_index = Some(0);
+        self.screen = Screen::AddConnectionScopeSelect;
+        Ok(())
+    }
+
+    fn select_connection_scope(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<()> {
+        let scope = match self.add_connection_scope_index {
+            Some(0) => ConnectionPersistenceScope::SessionOnly,
+            Some(1) => ConnectionPersistenceScope::Repo,
+            Some(2) => ConnectionPersistenceScope::Global,
+            _ => return Ok(()),
+        };
+
+        let template = ConnectionSpec {
+            name: "new_connection".to_string(),
+            uri: "mongodb://localhost:27017".to_string(),
+            default_database: Some("test".to_string()),
+        };
+
+        let action = PendingEditorAction::AddConnection { scope, template };
+        let Some(_) = self.ensure_editor_command(action.clone())? else {
+            return Ok(());
+        };
+        self.perform_editor_action(action, terminal)
+    }
+
+    fn perform_add_connection_editor_action(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+        scope: ConnectionPersistenceScope,
+        template: ConnectionSpec,
+    ) -> Result<()> {
+        let editor = self
+            .editor_command
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("editor command missing"))?;
+        let initial =
+            toml::to_string_pretty(&template).context("unable to render connection template")?;
+        let contents = self.open_editor(terminal, editor, "connection", &initial)?;
+        if is_editor_cancelled(&contents, &initial) {
+            self.message = Some("cancelled".to_string());
+            self.screen = Screen::Connections;
+            return Ok(());
+        }
+        let connection: ConnectionSpec =
+            toml::from_str(&contents).context("invalid TOML for connection")?;
+
+        // Validate the connection
+        if connection.name.trim().is_empty() {
+            anyhow::bail!("connection name cannot be empty");
+        }
+        if connection.uri.trim().is_empty() {
+            anyhow::bail!("connection uri cannot be empty");
+        }
+
+        // Check for duplicate names
+        if self
+            .storage
+            .config
+            .connections
+            .iter()
+            .any(|c| c.name == connection.name)
+        {
+            anyhow::bail!("connection with name '{}' already exists", connection.name);
+        }
+
+        match scope {
+            ConnectionPersistenceScope::SessionOnly => {
+                self.storage.config.connections.push(connection.clone());
+                // Update connection_index to point to the new connection
+                self.connection_index = Some(self.storage.config.connections.len() - 1);
+                self.message = Some(format!(
+                    "added connection '{}' (session only)",
+                    connection.name
+                ));
+                self.screen = Screen::Connections;
+            }
+            ConnectionPersistenceScope::Repo => {
+                if self.paths.repo_config_root().is_none() {
+                    anyhow::bail!("no repo config found; run inside a repo with .lazycompass");
+                }
+                let paths = self.paths.clone();
+                let new_connection = connection.clone();
+
+                // Write to repo config
+                let result = self
+                    .runtime
+                    .block_on(append_connection_to_repo_config(&paths, &new_connection));
+                if let Err(e) = result {
+                    self.set_error_message(&e);
+                    self.screen = Screen::Connections;
+                    return Ok(());
+                }
+
+                // Update in-memory config
+                self.storage.config.connections.push(connection.clone());
+                self.connection_index = Some(self.storage.config.connections.len() - 1);
+                self.message = Some(format!(
+                    "added connection '{}' to repo config",
+                    connection.name
+                ));
+                self.screen = Screen::Connections;
+            }
+            ConnectionPersistenceScope::Global => {
+                let paths = self.paths.clone();
+                let new_connection = connection.clone();
+
+                // Write to global config
+                let result = self
+                    .runtime
+                    .block_on(append_connection_to_global_config(&paths, &new_connection));
+                if let Err(e) = result {
+                    self.set_error_message(&e);
+                    self.screen = Screen::Connections;
+                    return Ok(());
+                }
+
+                // Update in-memory config
+                self.storage.config.connections.push(connection.clone());
+                self.connection_index = Some(self.storage.config.connections.len() - 1);
+                self.message = Some(format!(
+                    "added connection '{}' to global config",
+                    connection.name
+                ));
+                self.screen = Screen::Connections;
+            }
+        }
+
+        Ok(())
+    }
+
     fn ensure_editor_command(&mut self, action: PendingEditorAction) -> Result<Option<String>> {
         if let Some(editor) = &self.editor_command {
             return Ok(Some(editor.clone()));
@@ -1125,6 +1505,9 @@ impl App {
             PendingEditorAction::SaveAggregation { template } => {
                 self.save_aggregation_with_template(terminal, template)
             }
+            PendingEditorAction::AddConnection { scope, template } => {
+                self.perform_add_connection_editor_action(terminal, scope, template)
+            }
         }
     }
 
@@ -1139,7 +1522,12 @@ impl App {
             .editor_command
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("editor command missing"))?;
-        let contents = self.open_editor(terminal, editor, "insert", "{}")?;
+        let initial = "{}";
+        let contents = self.open_editor(terminal, editor, "insert", initial)?;
+        if is_editor_cancelled(&contents, initial) {
+            self.message = Some("cancelled".to_string());
+            return Ok(());
+        }
         let document = parse_json_document("document", &contents)?;
         let spec = DocumentInsertSpec {
             connection: Some(connection),
@@ -1171,6 +1559,10 @@ impl App {
         let initial =
             serde_json::to_string_pretty(&document).context("unable to serialize document")?;
         let contents = self.open_editor(terminal, editor, "edit", &initial)?;
+        if is_editor_cancelled(&contents, &initial) {
+            self.message = Some("cancelled".to_string());
+            return Ok(());
+        }
         let mut updated = parse_json_document("document", &contents)?;
         let mut id_changed = false;
         match updated.get("_id") {
@@ -1210,6 +1602,10 @@ impl App {
         let initial =
             toml::to_string_pretty(&template).context("unable to render query template")?;
         let contents = self.open_editor(terminal, editor, "query", &initial)?;
+        if is_editor_cancelled(&contents, &initial) {
+            self.message = Some("cancelled".to_string());
+            return Ok(());
+        }
         let query: SavedQuery =
             toml::from_str(&contents).context("invalid TOML for saved query")?;
         query.validate().context("invalid saved query")?;
@@ -1241,6 +1637,10 @@ impl App {
         let initial =
             toml::to_string_pretty(&template).context("unable to render aggregation template")?;
         let contents = self.open_editor(terminal, editor, "aggregation", &initial)?;
+        if is_editor_cancelled(&contents, &initial) {
+            self.message = Some("cancelled".to_string());
+            return Ok(());
+        }
         let aggregation: SavedAggregation =
             toml::from_str(&contents).context("invalid TOML for saved aggregation")?;
         aggregation
@@ -1374,6 +1774,17 @@ impl App {
                 Self::select_index(&mut self.document_index, self.documents.len(), 0)
             }
             Screen::DocumentView => self.document_scroll = 0,
+            Screen::SavedQuerySelect => {
+                Self::select_index(&mut self.saved_query_index, self.storage.queries.len(), 0)
+            }
+            Screen::SavedAggregationSelect => Self::select_index(
+                &mut self.saved_agg_index,
+                self.storage.aggregations.len(),
+                0,
+            ),
+            Screen::AddConnectionScopeSelect => {
+                Self::select_index(&mut self.add_connection_scope_index, 3, 0)
+            }
         }
     }
 
@@ -1391,6 +1802,15 @@ impl App {
             }
             Screen::Documents => Self::select_last(&mut self.document_index, self.documents.len()),
             Screen::DocumentView => self.document_scroll = self.max_document_scroll(),
+            Screen::SavedQuerySelect => {
+                Self::select_last(&mut self.saved_query_index, self.storage.queries.len())
+            }
+            Screen::SavedAggregationSelect => {
+                Self::select_last(&mut self.saved_agg_index, self.storage.aggregations.len())
+            }
+            Screen::AddConnectionScopeSelect => {
+                Self::select_last(&mut self.add_connection_scope_index, 3)
+            }
         }
     }
 
@@ -1411,6 +1831,19 @@ impl App {
                 Self::move_selection(&mut self.document_index, self.documents.len(), -1)
             }
             Screen::DocumentView => self.scroll_document(-1),
+            Screen::SavedQuerySelect => {
+                Self::move_selection(&mut self.saved_query_index, self.storage.queries.len(), -1)
+            }
+            Screen::SavedAggregationSelect => Self::move_selection(
+                &mut self.saved_agg_index,
+                self.storage.aggregations.len(),
+                -1,
+            ),
+            Screen::AddConnectionScopeSelect => Self::move_selection(
+                &mut self.add_connection_scope_index,
+                3, // Session-only, Repo, Global
+                -1,
+            ),
         }
     }
 
@@ -1431,6 +1864,19 @@ impl App {
                 Self::move_selection(&mut self.document_index, self.documents.len(), 1)
             }
             Screen::DocumentView => self.scroll_document(1),
+            Screen::SavedQuerySelect => {
+                Self::move_selection(&mut self.saved_query_index, self.storage.queries.len(), 1)
+            }
+            Screen::SavedAggregationSelect => Self::move_selection(
+                &mut self.saved_agg_index,
+                self.storage.aggregations.len(),
+                1,
+            ),
+            Screen::AddConnectionScopeSelect => Self::move_selection(
+                &mut self.add_connection_scope_index,
+                3, // Session-only, Repo, Global
+                1,
+            ),
         }
     }
 
@@ -1441,10 +1887,16 @@ impl App {
             Screen::Collections => self.screen = Screen::Databases,
             Screen::Documents => self.screen = Screen::Collections,
             Screen::DocumentView => self.screen = Screen::Documents,
+            Screen::SavedQuerySelect => self.screen = Screen::Documents,
+            Screen::SavedAggregationSelect => self.screen = Screen::Documents,
+            Screen::AddConnectionScopeSelect => {
+                self.screen = Screen::Connections;
+                self.add_connection_scope_index = Some(0);
+            }
         }
     }
 
-    fn go_forward(&mut self) -> Result<()> {
+    fn go_forward(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
         match self.screen {
             Screen::Connections => {
                 if self.connection_index.is_some() {
@@ -1483,6 +1935,21 @@ impl App {
                 }
             }
             Screen::DocumentView => {}
+            Screen::SavedQuerySelect => {
+                if let Err(error) = self.start_execute_saved_query() {
+                    self.set_error_message(&error);
+                }
+            }
+            Screen::SavedAggregationSelect => {
+                if let Err(error) = self.start_execute_saved_aggregation() {
+                    self.set_error_message(&error);
+                }
+            }
+            Screen::AddConnectionScopeSelect => {
+                if let Err(error) = self.select_connection_scope(terminal) {
+                    self.set_error_message(&error);
+                }
+            }
         }
 
         Ok(())
@@ -1546,6 +2013,155 @@ impl App {
         Ok(())
     }
 
+    fn start_execute_saved_query(&mut self) -> Result<()> {
+        let query_index = self
+            .saved_query_index
+            .ok_or_else(|| anyhow::anyhow!("select a saved query"))?;
+        let saved = self
+            .storage
+            .queries
+            .get(query_index)
+            .ok_or_else(|| anyhow::anyhow!("select a saved query"))?
+            .clone();
+
+        // Use current context as fallback if saved fields are empty
+        let connection = if saved
+            .connection
+            .as_ref()
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true)
+        {
+            self.selected_connection().map(|c| c.name.clone())
+        } else {
+            saved.connection.clone()
+        };
+
+        let database = if saved.database.trim().is_empty() {
+            self.selected_database()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("no database selected and saved query has no database")
+                })?
+                .to_string()
+        } else {
+            saved.database.clone()
+        };
+
+        let collection = if saved.collection.trim().is_empty() {
+            self.selected_collection()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("no collection selected and saved query has no collection")
+                })?
+                .to_string()
+        } else {
+            saved.collection.clone()
+        };
+
+        let spec = lazycompass_mongo::QuerySpec {
+            connection,
+            database,
+            collection,
+            filter: saved.filter.clone(),
+            projection: saved.projection.clone(),
+            sort: saved.sort.clone(),
+            limit: saved.limit,
+        };
+
+        let config = self.storage.config.clone();
+        let request_id = self.next_load_id();
+        self.saved_query_load_id = Some(request_id);
+        self.saved_query_state = LoadState::Loading;
+        self.message = Some(format!("executing saved query '{}'...", saved.name));
+        let saved_name = saved.name.clone();
+        let sender = self.load_tx.clone();
+        self.runtime.spawn(async move {
+            let executor = MongoExecutor::new();
+            let result = executor
+                .execute_query(&config, &spec)
+                .await
+                .map_err(|error| error.to_string());
+            let _ = sender.send(LoadResult::SavedQuery {
+                id: request_id,
+                name: saved_name,
+                result,
+            });
+        });
+        Ok(())
+    }
+
+    fn start_execute_saved_aggregation(&mut self) -> Result<()> {
+        let agg_index = self
+            .saved_agg_index
+            .ok_or_else(|| anyhow::anyhow!("select a saved aggregation"))?;
+        let saved = self
+            .storage
+            .aggregations
+            .get(agg_index)
+            .ok_or_else(|| anyhow::anyhow!("select a saved aggregation"))?
+            .clone();
+
+        // Use current context as fallback if saved fields are empty
+        let connection = if saved
+            .connection
+            .as_ref()
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true)
+        {
+            self.selected_connection().map(|c| c.name.clone())
+        } else {
+            saved.connection.clone()
+        };
+
+        let database = if saved.database.trim().is_empty() {
+            self.selected_database()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("no database selected and saved aggregation has no database")
+                })?
+                .to_string()
+        } else {
+            saved.database.clone()
+        };
+
+        let collection = if saved.collection.trim().is_empty() {
+            self.selected_collection()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "no collection selected and saved aggregation has no collection"
+                    )
+                })?
+                .to_string()
+        } else {
+            saved.collection.clone()
+        };
+
+        let spec = lazycompass_mongo::AggregationSpec {
+            connection,
+            database,
+            collection,
+            pipeline: saved.pipeline.clone(),
+        };
+
+        let config = self.storage.config.clone();
+        let request_id = self.next_load_id();
+        self.saved_agg_load_id = Some(request_id);
+        self.saved_agg_state = LoadState::Loading;
+        self.message = Some(format!("executing saved aggregation '{}'...", saved.name));
+        let saved_name = saved.name.clone();
+        let sender = self.load_tx.clone();
+        self.runtime.spawn(async move {
+            let executor = MongoExecutor::new();
+            let result = executor
+                .execute_aggregation(&config, &spec)
+                .await
+                .map_err(|error| error.to_string());
+            let _ = sender.send(LoadResult::SavedAggregation {
+                id: request_id,
+                name: saved_name,
+                result,
+            });
+        });
+        Ok(())
+    }
+
     fn start_load_collections(&mut self) -> Result<()> {
         let connection = self
             .selected_connection()
@@ -1602,6 +2218,7 @@ impl App {
         let request_id = self.next_load_id();
         self.document_load_id = Some(request_id);
         self.document_state = LoadState::Loading;
+        self.document_result_source = DocumentResultSource::Collection;
         self.document_load_reason = reason;
         self.document_pending_index = pending_index;
         self.documents.clear();
@@ -1825,7 +2442,7 @@ impl App {
                     .iter()
                     .map(document_preview)
                     .collect::<Vec<_>>();
-                let title = format!("Documents (page {})", self.document_page + 1);
+                let title = self.documents_list_title();
                 self.render_list(
                     frame,
                     panes[1],
@@ -1848,7 +2465,7 @@ impl App {
                     .iter()
                     .map(document_preview)
                     .collect::<Vec<_>>();
-                let title = format!("Documents (page {})", self.document_page + 1);
+                let title = self.documents_list_title();
                 self.render_list(
                     frame,
                     panes[0],
@@ -1884,6 +2501,152 @@ impl App {
                     .scroll((self.document_scroll, 0));
                 frame.render_widget(body, panes[1]);
             }
+            Screen::SavedQuerySelect => {
+                let panes = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(20), Constraint::Percentage(80)])
+                    .split(layout[1]);
+                self.render_list(
+                    frame,
+                    panes[0],
+                    ListView {
+                        title: "Collections",
+                        items: &self.collection_items,
+                        selected: self.collection_index,
+                        load_state: &self.collection_state,
+                        loading_label: "loading collections...",
+                    },
+                );
+                let right_panes = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Percentage(15), Constraint::Percentage(85)])
+                    .split(panes[1]);
+                let documents = self
+                    .documents
+                    .iter()
+                    .map(document_preview)
+                    .collect::<Vec<_>>();
+                let document_title = self.documents_list_title();
+                let items: Vec<String> = self
+                    .storage
+                    .queries
+                    .iter()
+                    .map(|q| {
+                        let context = format!(
+                            "{} / {} / {}",
+                            q.connection.as_deref().unwrap_or("-"),
+                            q.database,
+                            q.collection
+                        );
+                        format!("{} ({context})", q.name)
+                    })
+                    .collect();
+                self.render_list(
+                    frame,
+                    right_panes[0],
+                    ListView {
+                        title: "Select Saved Query to Run",
+                        items: &items,
+                        selected: self.saved_query_index,
+                        load_state: &self.saved_query_state,
+                        loading_label: "executing query...",
+                    },
+                );
+                self.render_list_with_focus(
+                    frame,
+                    right_panes[1],
+                    ListView {
+                        title: &document_title,
+                        items: &documents,
+                        selected: self.document_index,
+                        load_state: &self.document_state,
+                        loading_label: "loading documents...",
+                    },
+                    false,
+                );
+            }
+            Screen::SavedAggregationSelect => {
+                let panes = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(20), Constraint::Percentage(80)])
+                    .split(layout[1]);
+                self.render_list(
+                    frame,
+                    panes[0],
+                    ListView {
+                        title: "Collections",
+                        items: &self.collection_items,
+                        selected: self.collection_index,
+                        load_state: &self.collection_state,
+                        loading_label: "loading collections...",
+                    },
+                );
+                let right_panes = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Percentage(15), Constraint::Percentage(85)])
+                    .split(panes[1]);
+                let documents = self
+                    .documents
+                    .iter()
+                    .map(document_preview)
+                    .collect::<Vec<_>>();
+                let document_title = self.documents_list_title();
+                let items: Vec<String> = self
+                    .storage
+                    .aggregations
+                    .iter()
+                    .map(|a| {
+                        let context = format!(
+                            "{} / {} / {}",
+                            a.connection.as_deref().unwrap_or("-"),
+                            a.database,
+                            a.collection
+                        );
+                        format!("{} ({context})", a.name)
+                    })
+                    .collect();
+                self.render_list(
+                    frame,
+                    right_panes[0],
+                    ListView {
+                        title: "Select Saved Aggregation to Run",
+                        items: &items,
+                        selected: self.saved_agg_index,
+                        load_state: &self.saved_agg_state,
+                        loading_label: "executing aggregation...",
+                    },
+                );
+                self.render_list_with_focus(
+                    frame,
+                    right_panes[1],
+                    ListView {
+                        title: &document_title,
+                        items: &documents,
+                        selected: self.document_index,
+                        load_state: &self.document_state,
+                        loading_label: "loading documents...",
+                    },
+                    false,
+                );
+            }
+            Screen::AddConnectionScopeSelect => {
+                let items = vec![
+                    "Session only (not persisted)".to_string(),
+                    "Save to repo config (.lazycompass/config.toml)".to_string(),
+                    "Save to global config (~/.config/lazycompass/config.toml)".to_string(),
+                ];
+                self.render_list(
+                    frame,
+                    layout[1],
+                    ListView {
+                        title: "Select Persistence Scope for New Connection",
+                        items: &items,
+                        selected: self.add_connection_scope_index,
+                        load_state: &LoadState::Idle,
+                        loading_label: "",
+                    },
+                );
+            }
         }
 
         if self.help_visible {
@@ -1906,10 +2669,30 @@ impl App {
         area: ratatui::layout::Rect,
         view: ListView<'_>,
     ) {
-        let title = Line::from(Span::styled(
-            view.title.to_string(),
-            self.theme.title_style(),
-        ));
+        self.render_list_with_focus(frame, area, view, true);
+    }
+
+    fn render_list_with_focus(
+        &self,
+        frame: &mut ratatui::Frame,
+        area: ratatui::layout::Rect,
+        view: ListView<'_>,
+        focused: bool,
+    ) {
+        let title_style = if focused {
+            self.theme.title_style()
+        } else {
+            self.theme
+                .text_style()
+                .add_modifier(Modifier::DIM)
+                .add_modifier(Modifier::BOLD)
+        };
+        let border_style = if focused {
+            self.theme.border_style()
+        } else {
+            self.theme.border_style().add_modifier(Modifier::DIM)
+        };
+        let title = Line::from(Span::styled(view.title.to_string(), title_style));
         if view.items.is_empty() {
             let (text, style) = match view.load_state {
                 LoadState::Loading => (view.loading_label.to_string(), self.theme.text_style()),
@@ -1921,7 +2704,7 @@ impl App {
             let placeholder = Paragraph::new(text).style(style).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(self.theme.border_style())
+                    .border_style(border_style)
                     .title(title),
             );
             frame.render_widget(placeholder, area);
@@ -1938,13 +2721,13 @@ impl App {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(self.theme.border_style())
+                    .border_style(border_style)
                     .title(title),
             )
             .highlight_style(self.theme.selection_style())
             .highlight_symbol("> ");
         let mut state = ListState::default();
-        state.select(view.selected);
+        state.select(if focused { view.selected } else { None });
         frame.render_stateful_widget(list, area, &mut state);
     }
 
@@ -1989,6 +2772,9 @@ impl App {
             Screen::Collections => "Collections",
             Screen::Documents => "Documents",
             Screen::DocumentView => "Document",
+            Screen::SavedQuerySelect => "Run Saved Query",
+            Screen::SavedAggregationSelect => "Run Saved Aggregation",
+            Screen::AddConnectionScopeSelect => "Add Connection",
         };
         let connection = self
             .selected_connection()
@@ -2069,6 +2855,40 @@ impl App {
             vec![Line::from(hint), Line::from(" ")]
         }
     }
+
+    fn documents_list_title(&self) -> String {
+        let base = format!("Documents (page {})", self.document_page + 1);
+        match &self.document_result_source {
+            DocumentResultSource::Collection => base,
+            DocumentResultSource::SavedQuery { name } => {
+                format!("{base} [saved query: {name}] [c clear applied]")
+            }
+            DocumentResultSource::SavedAggregation { name } => {
+                format!("{base} [saved aggregation: {name}] [c clear applied]")
+            }
+        }
+    }
+
+    fn clear_applied_documents(&mut self) -> Result<()> {
+        if !matches!(self.screen, Screen::Documents | Screen::DocumentView) {
+            return Ok(());
+        }
+        if matches!(
+            self.document_result_source,
+            DocumentResultSource::Collection
+        ) {
+            return Ok(());
+        }
+
+        self.document_result_source = DocumentResultSource::Collection;
+        self.document_page = 0;
+        if let Err(error) = self.start_load_documents(None, DocumentLoadReason::Refresh) {
+            self.set_error_message(&error);
+            return Ok(());
+        }
+        self.message = Some("cleared applied saved results".to_string());
+        Ok(())
+    }
 }
 
 impl KeyBinding {
@@ -2121,6 +2941,9 @@ fn hint_groups(screen: Screen) -> &'static [HintGroup] {
         Screen::Collections => COLLECTION_HINTS,
         Screen::Documents => DOCUMENT_HINTS,
         Screen::DocumentView => DOCUMENT_VIEW_HINTS,
+        Screen::SavedQuerySelect => SAVED_QUERY_HINTS,
+        Screen::SavedAggregationSelect => SAVED_AGGREGATION_HINTS,
+        Screen::AddConnectionScopeSelect => ADD_CONNECTION_SCOPE_HINTS,
     }
 }
 
@@ -2140,7 +2963,11 @@ fn action_keys(action: KeyAction) -> &'static [&'static str] {
         KeyAction::Delete => &["d"],
         KeyAction::SaveQuery => &["Q"],
         KeyAction::SaveAggregation => &["A"],
+        KeyAction::RunSavedQuery => &["r"],
+        KeyAction::RunSavedAggregation => &["a"],
+        KeyAction::ClearApplied => &["c"],
         KeyAction::ToggleHelp => &["?"],
+        KeyAction::AddConnection => &["n"],
     }
 }
 
@@ -2401,6 +3228,11 @@ fn format_document(document: &Document) -> Vec<String> {
         Ok(output) => output.lines().map(|line| line.to_string()).collect(),
         Err(_) => vec![format!("{document:?}")],
     }
+}
+
+fn is_editor_cancelled(contents: &str, initial: &str) -> bool {
+    let trimmed = contents.trim();
+    trimmed.is_empty() || trimmed == initial.trim()
 }
 
 #[cfg(test)]

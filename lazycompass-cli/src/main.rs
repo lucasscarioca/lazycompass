@@ -4,7 +4,10 @@ use lazycompass_core::{
     AggregationRequest, AggregationTarget, Config, OutputFormat, QueryRequest, QueryTarget,
     WriteGuard, redact_sensitive_text,
 };
-use lazycompass_mongo::{AggregationSpec, Bson, Document, MongoExecutor, QuerySpec};
+use lazycompass_mongo::{
+    AggregationSpec, Bson, Document, DocumentInsertSpec, DocumentReplaceSpec, MongoExecutor,
+    QuerySpec, parse_json_document,
+};
 use lazycompass_storage::{ConfigPaths, StorageSnapshot, load_config, load_storage, log_file_path};
 use std::collections::BTreeSet;
 use std::env;
@@ -38,6 +41,9 @@ struct Cli {
 enum Commands {
     Query(QueryArgs),
     Agg(AggArgs),
+    Insert(InsertArgs),
+    Update(UpdateArgs),
+    Config(ConfigArgs),
     Upgrade(UpgradeArgs),
 }
 
@@ -80,6 +86,63 @@ struct AggArgs {
 }
 
 #[derive(Args)]
+struct InsertArgs {
+    #[arg(long)]
+    connection: Option<String>,
+    #[arg(long)]
+    db: Option<String>,
+    #[arg(long)]
+    collection: Option<String>,
+    /// JSON document as string
+    #[arg(long)]
+    document: Option<String>,
+    /// Path to JSON file containing document
+    #[arg(long)]
+    file: Option<String>,
+}
+
+#[derive(Args)]
+struct UpdateArgs {
+    #[arg(long)]
+    connection: Option<String>,
+    #[arg(long)]
+    db: Option<String>,
+    #[arg(long)]
+    collection: Option<String>,
+    /// Document ID to update (JSON format, e.g., '"id"' or '{"$oid":"..."}')
+    #[arg(long)]
+    id: String,
+    /// JSON document as string
+    #[arg(long)]
+    document: Option<String>,
+    /// Path to JSON file containing document
+    #[arg(long)]
+    file: Option<String>,
+}
+
+#[derive(Args)]
+struct ConfigArgs {
+    #[command(subcommand)]
+    command: ConfigCommands,
+
+    /// Use global config instead of repo config
+    #[arg(long, global = true, group = "scope")]
+    global: bool,
+
+    /// Use repo config instead of global config
+    #[arg(long, global = true, group = "scope")]
+    repo: bool,
+}
+
+#[derive(Subcommand)]
+enum ConfigCommands {
+    /// Open the config file in your default editor
+    Edit,
+    /// Add a new connection via interactive editor
+    AddConnection,
+}
+
+#[derive(Args)]
 struct UpgradeArgs {
     #[arg(long)]
     version: Option<String>,
@@ -114,6 +177,21 @@ fn run() -> Result<()> {
             cli.allow_pipeline_writes,
             cli.allow_insecure,
         )?,
+        Some(Commands::Insert(args)) => run_insert(
+            args,
+            cli.write_enabled,
+            cli.allow_pipeline_writes,
+            cli.allow_insecure,
+        )?,
+        Some(Commands::Update(args)) => run_update(
+            args,
+            cli.write_enabled,
+            cli.allow_pipeline_writes,
+            cli.allow_insecure,
+        )?,
+        Some(Commands::Config(args)) => {
+            run_config(args)?;
+        }
         Some(Commands::Upgrade(args)) => {
             run_upgrade(args)?;
         }
@@ -377,6 +455,125 @@ fn run_agg(
     let runtime = tokio::runtime::Runtime::new().context("unable to start async runtime")?;
     let documents = runtime.block_on(executor.execute_aggregation(&config, &spec))?;
     print_documents(request.output, &documents)
+}
+
+fn run_insert(
+    args: InsertArgs,
+    write_enabled: bool,
+    allow_pipeline_writes: bool,
+    allow_insecure: bool,
+) -> Result<()> {
+    let cwd = std::env::current_dir().context("unable to resolve current directory")?;
+    let paths = ConfigPaths::resolve_from(&cwd)?;
+    let storage = load_storage(&paths)?;
+    let mut config = storage.config.clone();
+    apply_cli_overrides(
+        &mut config,
+        write_enabled,
+        allow_pipeline_writes,
+        allow_insecure,
+    );
+    init_logging(&paths, &config)?;
+    tracing::info!(component = "cli", command = "insert", "lazycompass started");
+    report_warnings(&storage);
+
+    let database = args
+        .db
+        .ok_or_else(|| anyhow::anyhow!("--db is required for insert"))?;
+    let collection = args
+        .collection
+        .ok_or_else(|| anyhow::anyhow!("--collection is required for insert"))?;
+
+    let contents = read_document_input("insert", args.document, args.file)?;
+    let document = parse_json_document("document", &contents)?;
+    let spec = DocumentInsertSpec {
+        connection: args.connection,
+        database,
+        collection,
+        document,
+    };
+
+    let executor = MongoExecutor::new();
+    let connection = executor.resolve_connection(&config, spec.connection.as_deref())?;
+    tracing::info!(
+        component = "cli",
+        command = "insert",
+        connection = connection.name.as_str(),
+        database = spec.database.as_str(),
+        collection = spec.collection.as_str(),
+        "inserting document"
+    );
+    let runtime = tokio::runtime::Runtime::new().context("unable to start async runtime")?;
+    let inserted_id = runtime.block_on(executor.insert_document(&config, &spec))?;
+    println!("inserted document {}", format_bson(&inserted_id));
+    Ok(())
+}
+
+fn run_update(
+    args: UpdateArgs,
+    write_enabled: bool,
+    allow_pipeline_writes: bool,
+    allow_insecure: bool,
+) -> Result<()> {
+    let cwd = std::env::current_dir().context("unable to resolve current directory")?;
+    let paths = ConfigPaths::resolve_from(&cwd)?;
+    let storage = load_storage(&paths)?;
+    let mut config = storage.config.clone();
+    apply_cli_overrides(
+        &mut config,
+        write_enabled,
+        allow_pipeline_writes,
+        allow_insecure,
+    );
+    init_logging(&paths, &config)?;
+    tracing::info!(component = "cli", command = "update", "lazycompass started");
+    report_warnings(&storage);
+
+    let database = args
+        .db
+        .ok_or_else(|| anyhow::anyhow!("--db is required for update"))?;
+    let collection = args
+        .collection
+        .ok_or_else(|| anyhow::anyhow!("--collection is required for update"))?;
+
+    let id = parse_json_value("id", &args.id)?;
+    let contents = read_document_input("update", args.document, args.file)?;
+    let mut document = parse_json_document("document", &contents)?;
+    let mut id_changed = false;
+    match document.get("_id") {
+        Some(existing) if existing == &id => {}
+        _ => {
+            document.insert("_id", id.clone());
+            id_changed = true;
+        }
+    }
+
+    let spec = DocumentReplaceSpec {
+        connection: args.connection,
+        database,
+        collection,
+        id: id.clone(),
+        document,
+    };
+
+    let executor = MongoExecutor::new();
+    let connection = executor.resolve_connection(&config, spec.connection.as_deref())?;
+    tracing::info!(
+        component = "cli",
+        command = "update",
+        connection = connection.name.as_str(),
+        database = spec.database.as_str(),
+        collection = spec.collection.as_str(),
+        "replacing document"
+    );
+    let runtime = tokio::runtime::Runtime::new().context("unable to start async runtime")?;
+    runtime.block_on(executor.replace_document(&config, &spec))?;
+    if id_changed {
+        println!("updated document {} (kept --id)", format_bson(&id));
+    } else {
+        println!("updated document {}", format_bson(&id));
+    }
+    Ok(())
 }
 
 fn init_logging(paths: &ConfigPaths, config: &Config) -> Result<()> {
@@ -706,6 +903,233 @@ fn format_scalar(value: &Bson) -> String {
         Ok(value) => value.to_string(),
         Err(_) => format!("{value:?}"),
     }
+}
+
+fn format_bson(value: &Bson) -> String {
+    format_scalar(value)
+}
+
+fn run_config(args: ConfigArgs) -> Result<()> {
+    let cwd = std::env::current_dir().context("unable to resolve current directory")?;
+    let paths = ConfigPaths::resolve_from(&cwd)?;
+
+    // Determine scope: explicit --global flag takes precedence, otherwise use repo if available
+    let scope = if args.global {
+        ConfigScope::Global
+    } else if args.repo || paths.repo_config_path().is_some() {
+        ConfigScope::Repo
+    } else {
+        ConfigScope::Global
+    };
+
+    match args.command {
+        ConfigCommands::Edit => run_config_edit(&paths, scope),
+        ConfigCommands::AddConnection => run_config_add_connection(&paths, scope),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ConfigScope {
+    Global,
+    Repo,
+}
+
+fn run_config_edit(paths: &ConfigPaths, scope: ConfigScope) -> Result<()> {
+    let config_path = match scope {
+        ConfigScope::Global => paths.global_config_path(),
+        ConfigScope::Repo => paths.repo_config_path().ok_or_else(|| {
+            anyhow::anyhow!(
+                "no repository config found; run inside a repo with .lazycompass or use --global"
+            )
+        })?,
+    };
+
+    // Ensure the directory exists
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("unable to create config directory {}", parent.display()))?;
+    }
+
+    // Create default config if it doesn't exist
+    if !config_path.exists() {
+        let default_config = r#"# LazyCompass Configuration
+# Global config: ~/.config/lazycompass/config.toml
+# Repo config: .lazycompass/config.toml (overrides global)
+
+# Example connection (remove if not needed):
+# [[connections]]
+# name = "local"
+# uri = "mongodb://localhost:27017"
+# default_database = "mydb"
+
+[theme]
+# name = "classic"
+
+[logging]
+# level = "info"
+# file = "lazycompass.log"
+# max_size_mb = 10
+# max_backups = 3
+
+[timeouts]
+# connect_ms = 10000
+# query_ms = 30000
+
+# read_only = true
+# allow_pipeline_writes = false
+# allow_insecure = false
+"#;
+        fs::write(&config_path, default_config)
+            .with_context(|| format!("unable to create config file {}", config_path.display()))?;
+    }
+
+    open_in_editor(&config_path)?;
+
+    println!("config opened in editor: {}", config_path.display());
+    Ok(())
+}
+
+fn run_config_add_connection(paths: &ConfigPaths, scope: ConfigScope) -> Result<()> {
+    use lazycompass_storage::{
+        append_connection_to_global_config, append_connection_to_repo_config,
+    };
+    use std::io::Write;
+
+    // Verify scope is valid before creating temp file
+    if let ConfigScope::Repo = scope {
+        paths.repo_config_path().ok_or_else(|| {
+            anyhow::anyhow!(
+                "no repository config found; run inside a repo with .lazycompass or use --global"
+            )
+        })?;
+    }
+
+    // Create a temp file with the connection template
+    let template = r#"# Edit the connection details below and save the file.
+# Lines starting with # are comments and will be ignored.
+# Remove the comments and fill in your values.
+
+name = "my-connection"
+uri = "mongodb://localhost:27017"
+default_database = "mydb"
+"#;
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let temp_path = env::temp_dir().join(format!("lazycompass_connection_{nonce}.toml"));
+
+    {
+        let mut file = fs::File::create(&temp_path)
+            .with_context(|| format!("unable to create temp file {}", temp_path.display()))?;
+        file.write_all(template.as_bytes())
+            .with_context(|| format!("unable to write temp file {}", temp_path.display()))?;
+    }
+
+    // Open in editor
+    open_in_editor(&temp_path)?;
+
+    // Read back the edited content
+    let edited_content = fs::read_to_string(&temp_path)
+        .with_context(|| format!("unable to read edited file {}", temp_path.display()))?;
+
+    // Clean up temp file
+    let _ = fs::remove_file(&temp_path);
+
+    // Parse the connection (filter out comment lines first)
+    let toml_content: String = edited_content
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let connection: lazycompass_core::ConnectionSpec = toml::from_str(&toml_content).with_context(
+        || "invalid TOML in connection definition; expected fields: name, uri, default_database",
+    )?;
+
+    // Validate
+    if connection.name.trim().is_empty() {
+        anyhow::bail!("connection name cannot be empty");
+    }
+    if connection.uri.trim().is_empty() {
+        anyhow::bail!("connection uri cannot be empty");
+    }
+
+    // Append to config using blocking runtime since these are async functions
+    let runtime = tokio::runtime::Runtime::new().context("unable to start async runtime")?;
+
+    let config_path = match scope {
+        ConfigScope::Global => {
+            runtime.block_on(append_connection_to_global_config(paths, &connection))?
+        }
+        ConfigScope::Repo => {
+            runtime.block_on(append_connection_to_repo_config(paths, &connection))?
+        }
+    };
+
+    println!(
+        "connection '{}' added to {}",
+        connection.name,
+        config_path.display()
+    );
+    Ok(())
+}
+
+fn open_in_editor(path: &Path) -> Result<()> {
+    let editor = env::var("EDITOR")
+        .or_else(|_| env::var("VISUAL"))
+        .unwrap_or_else(|_| "vi".to_string());
+
+    let status = Command::new(&editor)
+        .arg(path)
+        .status()
+        .with_context(|| format!("failed to open editor '{editor}'"))?;
+
+    if !status.success() {
+        anyhow::bail!("editor exited with non-zero status");
+    }
+
+    Ok(())
+}
+
+fn read_document_input(
+    label: &str,
+    document: Option<String>,
+    file: Option<String>,
+) -> Result<String> {
+    if document.is_some() && file.is_some() {
+        anyhow::bail!("--document and --file cannot be used together");
+    }
+    if let Some(value) = document {
+        return Ok(value);
+    }
+    if let Some(path) = file {
+        return fs::read_to_string(&path)
+            .with_context(|| format!("unable to read document file {path}"));
+    }
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let temp_path = env::temp_dir().join(format!("lazycompass_{label}_{nonce}.json"));
+    fs::write(&temp_path, "{}")
+        .with_context(|| format!("unable to create temp file {}", temp_path.display()))?;
+    open_in_editor(&temp_path)?;
+    let contents = fs::read_to_string(&temp_path)
+        .with_context(|| format!("unable to read temp file {}", temp_path.display()))?;
+    let _ = fs::remove_file(&temp_path);
+    if contents.trim().is_empty() {
+        anyhow::bail!("document cannot be empty");
+    }
+    Ok(contents)
+}
+
+fn parse_json_value(label: &str, value: &str) -> Result<Bson> {
+    let json: serde_json::Value =
+        serde_json::from_str(value).with_context(|| format!("invalid JSON in {label}"))?;
+    Bson::try_from(json).with_context(|| format!("invalid JSON in {label}"))
 }
 
 fn run_upgrade(args: UpgradeArgs) -> Result<()> {

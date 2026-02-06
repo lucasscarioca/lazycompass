@@ -7,6 +7,8 @@ LazyCompass loads config from two locations:
 
 Repo config overrides global. Connections are merged by name; a repo connection replaces a global connection with the same name. Other fields prefer the repo value when set, otherwise fall back to global.
 
+Optional `.env` loading happens before config is parsed. LazyCompass looks for `.env` in the repo root and in `~/.config/lazycompass/` (in that order). Values from the real environment always win over `.env`.
+
 Environment variables can be interpolated with `${VAR}` in:
 
 - `connections[].uri`
@@ -49,6 +51,11 @@ File permissions (Unix):
 Editor command:
 
 - `$VISUAL`/`$EDITOR` are parsed as a command plus arguments (no shell expansion or pipes).
+
+Config editing:
+
+- `lazycompass config edit` opens the resolved config in your editor.
+- `lazycompass config add-connection` adds a connection interactively.
 
 ## Config schema
 

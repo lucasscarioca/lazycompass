@@ -67,7 +67,9 @@ lazycompass
 
 Write actions open your `$VISUAL` or `$EDITOR` for JSON/TOML editing (command + args only; no shell expansion).
 
-Documents screen keys: `i` insert, `e` edit, `d` delete, `Q` save query, `A` save aggregation.
+Documents screen keys: `i` insert, `e` edit, `d` delete, `Q` save query, `A` save aggregation, `r` run saved query, `g` run saved aggregation. Connections screen key: `n` add connection.
+
+Optional `.env` loading is supported for config interpolation (see `CONFIGURATION.md`).
 
 Run a saved query or aggregation:
 
@@ -81,6 +83,15 @@ Run an inline query or aggregation:
 ```bash
 lazycompass query --db lazycompass --collection users --filter '{"active": true}'
 lazycompass agg --db lazycompass --collection orders --pipeline '[{"$group": {"_id": "$userId", "total": {"$sum": "$total"}}}]'
+```
+
+Manage config and data:
+
+```bash
+lazycompass config edit
+lazycompass config add-connection
+lazycompass insert --db lazycompass --collection users --document '{"email": "a@example.com"}'
+lazycompass update --db lazycompass --collection users --id '{"$oid":"64e1f2b4c2a3e02c9a0a9c10"}' --document '{"email": "a@example.com", "active": true}'
 ```
 
 ## Configuration

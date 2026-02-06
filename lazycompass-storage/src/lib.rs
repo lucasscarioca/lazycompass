@@ -95,11 +95,11 @@ pub fn load_storage_with_config(paths: &ConfigPaths, config: Config) -> Result<S
 }
 
 pub fn load_config(paths: &ConfigPaths) -> Result<Config> {
-    let global = read_config(&paths.global_config_path())?;
     let repo = match paths.repo_config_path() {
         Some(path) => read_config(&path)?,
         None => Config::default(),
     };
+    let global = read_config(&paths.global_config_path())?;
 
     Ok(merge_config(global, repo))
 }
@@ -185,6 +185,96 @@ pub fn write_saved_aggregation(
     write_secure_file(&path, &contents)
         .with_context(|| format!("unable to write saved aggregation {}", path.display()))?;
     Ok(path)
+}
+
+/// Append a connection to the repo config file.
+/// Creates the config file if it doesn't exist.
+pub async fn append_connection_to_repo_config(
+    paths: &ConfigPaths,
+    connection: &lazycompass_core::ConnectionSpec,
+) -> Result<PathBuf> {
+    let repo_root = paths
+        .repo_config_root()
+        .ok_or_else(|| anyhow::anyhow!("no repo config found"))?;
+    let config_path = repo_root.join("config.toml");
+
+    // Ensure the directory exists
+    ensure_secure_dir(&repo_root)?;
+
+    // Read existing config or create default
+    let mut config = if config_path.exists() {
+        read_config_for_update(&config_path)?
+    } else {
+        lazycompass_core::Config::default()
+    };
+
+    // Check for duplicate names
+    if config.connections.iter().any(|c| c.name == connection.name) {
+        anyhow::bail!(
+            "connection '{}' already exists in repo config",
+            connection.name
+        );
+    }
+
+    // Add the new connection
+    config.connections.push(connection.clone());
+
+    // Write back
+    let contents = toml::to_string_pretty(&config).context("unable to serialize config")?;
+    write_secure_file(&config_path, &contents)
+        .with_context(|| format!("unable to write config {}", config_path.display()))?;
+
+    Ok(config_path)
+}
+
+/// Append a connection to the global config file.
+/// Creates the config file if it doesn't exist.
+pub async fn append_connection_to_global_config(
+    paths: &ConfigPaths,
+    connection: &lazycompass_core::ConnectionSpec,
+) -> Result<PathBuf> {
+    let config_path = paths.global_config_path();
+
+    // Ensure the directory exists
+    ensure_secure_dir(&paths.global_root)?;
+
+    // Read existing config or create default
+    let mut config = if config_path.exists() {
+        read_config_for_update(&config_path)?
+    } else {
+        lazycompass_core::Config::default()
+    };
+
+    // Check for duplicate names
+    if config.connections.iter().any(|c| c.name == connection.name) {
+        anyhow::bail!(
+            "connection '{}' already exists in global config",
+            connection.name
+        );
+    }
+
+    // Add the new connection
+    config.connections.push(connection.clone());
+
+    // Write back
+    let contents = toml::to_string_pretty(&config).context("unable to serialize config")?;
+    write_secure_file(&config_path, &contents)
+        .with_context(|| format!("unable to write config {}", config_path.display()))?;
+
+    Ok(config_path)
+}
+
+/// Read config for update (without env var resolution - we keep them as-is)
+fn read_config_for_update(path: &Path) -> Result<lazycompass_core::Config> {
+    if !path.is_file() {
+        return Ok(lazycompass_core::Config::default());
+    }
+
+    let contents = fs::read_to_string(path)
+        .with_context(|| format!("unable to read config file {}", path.display()))?;
+    let config: lazycompass_core::Config = toml::from_str(&contents)
+        .with_context(|| format!("invalid TOML in config file {}", path.display()))?;
+    Ok(config)
 }
 
 fn ensure_secure_dir(path: &Path) -> Result<()> {
@@ -344,6 +434,7 @@ fn read_config(path: &Path) -> Result<Config> {
         return Ok(Config::default());
     }
 
+    load_dotenv_for_config(path)?;
     let contents = fs::read_to_string(path)
         .with_context(|| format!("unable to read config file {}", path.display()))?;
     let mut config: Config = toml::from_str(&contents)
@@ -352,6 +443,27 @@ fn read_config(path: &Path) -> Result<Config> {
     validate_config(&config)
         .with_context(|| format!("invalid config data in {}", path.display()))?;
     Ok(config)
+}
+
+fn load_dotenv_for_config(path: &Path) -> Result<()> {
+    let Some(dotenv_path) = dotenv_path_for_config(path) else {
+        return Ok(());
+    };
+
+    if dotenv_path.is_file() {
+        dotenvy::from_path(&dotenv_path)
+            .with_context(|| format!("unable to read .env file {}", dotenv_path.display()))?;
+    }
+
+    Ok(())
+}
+
+fn dotenv_path_for_config(path: &Path) -> Option<PathBuf> {
+    let parent = path.parent()?;
+    if parent.file_name().and_then(|name| name.to_str()) == Some(".lazycompass") {
+        return parent.parent().map(|root| root.join(".env"));
+    }
+    Some(parent.join(".env"))
 }
 
 fn resolve_env_vars(config: &mut Config, path: &Path) -> Result<()> {
