@@ -52,6 +52,7 @@ enum KeyAction {
     SaveAggregation,
     RunSavedQuery,
     RunSavedAggregation,
+    ClearApplied,
     ToggleHelp,
     AddConnection,
 }
@@ -162,7 +163,12 @@ const KEY_BINDINGS: &[KeyBinding] = &[
     },
     KeyBinding {
         action: KeyAction::RunSavedAggregation,
-        code: KeyCode::Char('g'),
+        code: KeyCode::Char('a'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::ClearApplied,
+        code: KeyCode::Char('c'),
         modifiers: KeyModifiers::NONE,
     },
     KeyBinding {
@@ -535,10 +541,12 @@ enum LoadResult {
     },
     SavedQuery {
         id: u64,
+        name: String,
         result: Result<Vec<Document>, String>,
     },
     SavedAggregation {
         id: u64,
+        name: String,
         result: Result<Vec<Document>, String>,
     },
 }
@@ -549,6 +557,13 @@ enum DocumentLoadReason {
     NavigateNext,
     NavigatePrevious,
     Refresh,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DocumentResultSource {
+    Collection,
+    SavedQuery { name: String },
+    SavedAggregation { name: String },
 }
 
 struct ListView<'a> {
@@ -599,6 +614,7 @@ struct App {
     saved_agg_state: LoadState,
     document_pending_index: Option<usize>,
     document_load_reason: DocumentLoadReason,
+    document_result_source: DocumentResultSource,
     saved_query_index: Option<usize>,
     saved_agg_index: Option<usize>,
     add_connection_scope_index: Option<usize>,
@@ -664,6 +680,7 @@ impl App {
             saved_agg_state: LoadState::Idle,
             document_pending_index: None,
             document_load_reason: DocumentLoadReason::Refresh,
+            document_result_source: DocumentResultSource::Collection,
             saved_query_index: None,
             saved_agg_index: None,
             add_connection_scope_index: Some(0),
@@ -794,7 +811,7 @@ impl App {
                     }
                 }
             }
-            LoadResult::SavedQuery { id, result } => {
+            LoadResult::SavedQuery { id, name, result } => {
                 if self.saved_query_load_id != Some(id) {
                     return;
                 }
@@ -811,6 +828,7 @@ impl App {
                         self.document_page = 0;
                         self.document_lines.clear();
                         self.document_scroll = 0;
+                        self.document_result_source = DocumentResultSource::SavedQuery { name };
                         self.screen = Screen::Documents;
                         self.message = Some(format!(
                             "query returned {} document(s)",
@@ -825,7 +843,7 @@ impl App {
                     }
                 }
             }
-            LoadResult::SavedAggregation { id, result } => {
+            LoadResult::SavedAggregation { id, name, result } => {
                 if self.saved_agg_load_id != Some(id) {
                     return;
                 }
@@ -842,6 +860,8 @@ impl App {
                         self.document_page = 0;
                         self.document_lines.clear();
                         self.document_scroll = 0;
+                        self.document_result_source =
+                            DocumentResultSource::SavedAggregation { name };
                         self.screen = Screen::Documents;
                         self.message = Some(format!(
                             "aggregation returned {} document(s)",
@@ -939,6 +959,7 @@ impl App {
             KeyAction::SaveAggregation => self.save_aggregation(terminal)?,
             KeyAction::RunSavedQuery => self.run_saved_query()?,
             KeyAction::RunSavedAggregation => self.run_saved_aggregation()?,
+            KeyAction::ClearApplied => self.clear_applied_documents()?,
             KeyAction::ToggleHelp => self.help_visible = !self.help_visible,
             KeyAction::AddConnection => self.start_add_connection()?,
         }
@@ -2050,6 +2071,7 @@ impl App {
         self.saved_query_load_id = Some(request_id);
         self.saved_query_state = LoadState::Loading;
         self.message = Some(format!("executing saved query '{}'...", saved.name));
+        let saved_name = saved.name.clone();
         let sender = self.load_tx.clone();
         self.runtime.spawn(async move {
             let executor = MongoExecutor::new();
@@ -2059,6 +2081,7 @@ impl App {
                 .map_err(|error| error.to_string());
             let _ = sender.send(LoadResult::SavedQuery {
                 id: request_id,
+                name: saved_name,
                 result,
             });
         });
@@ -2122,6 +2145,7 @@ impl App {
         self.saved_agg_load_id = Some(request_id);
         self.saved_agg_state = LoadState::Loading;
         self.message = Some(format!("executing saved aggregation '{}'...", saved.name));
+        let saved_name = saved.name.clone();
         let sender = self.load_tx.clone();
         self.runtime.spawn(async move {
             let executor = MongoExecutor::new();
@@ -2131,6 +2155,7 @@ impl App {
                 .map_err(|error| error.to_string());
             let _ = sender.send(LoadResult::SavedAggregation {
                 id: request_id,
+                name: saved_name,
                 result,
             });
         });
@@ -2193,6 +2218,7 @@ impl App {
         let request_id = self.next_load_id();
         self.document_load_id = Some(request_id);
         self.document_state = LoadState::Loading;
+        self.document_result_source = DocumentResultSource::Collection;
         self.document_load_reason = reason;
         self.document_pending_index = pending_index;
         self.documents.clear();
@@ -2416,7 +2442,7 @@ impl App {
                     .iter()
                     .map(document_preview)
                     .collect::<Vec<_>>();
-                let title = format!("Documents (page {})", self.document_page + 1);
+                let title = self.documents_list_title();
                 self.render_list(
                     frame,
                     panes[1],
@@ -2439,7 +2465,7 @@ impl App {
                     .iter()
                     .map(document_preview)
                     .collect::<Vec<_>>();
-                let title = format!("Documents (page {})", self.document_page + 1);
+                let title = self.documents_list_title();
                 self.render_list(
                     frame,
                     panes[0],
@@ -2476,6 +2502,31 @@ impl App {
                 frame.render_widget(body, panes[1]);
             }
             Screen::SavedQuerySelect => {
+                let panes = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(20), Constraint::Percentage(80)])
+                    .split(layout[1]);
+                self.render_list(
+                    frame,
+                    panes[0],
+                    ListView {
+                        title: "Collections",
+                        items: &self.collection_items,
+                        selected: self.collection_index,
+                        load_state: &self.collection_state,
+                        loading_label: "loading collections...",
+                    },
+                );
+                let right_panes = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Percentage(15), Constraint::Percentage(85)])
+                    .split(panes[1]);
+                let documents = self
+                    .documents
+                    .iter()
+                    .map(document_preview)
+                    .collect::<Vec<_>>();
+                let document_title = self.documents_list_title();
                 let items: Vec<String> = self
                     .storage
                     .queries
@@ -2492,7 +2543,7 @@ impl App {
                     .collect();
                 self.render_list(
                     frame,
-                    layout[1],
+                    right_panes[0],
                     ListView {
                         title: "Select Saved Query to Run",
                         items: &items,
@@ -2501,8 +2552,45 @@ impl App {
                         loading_label: "executing query...",
                     },
                 );
+                self.render_list_with_focus(
+                    frame,
+                    right_panes[1],
+                    ListView {
+                        title: &document_title,
+                        items: &documents,
+                        selected: self.document_index,
+                        load_state: &self.document_state,
+                        loading_label: "loading documents...",
+                    },
+                    false,
+                );
             }
             Screen::SavedAggregationSelect => {
+                let panes = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(20), Constraint::Percentage(80)])
+                    .split(layout[1]);
+                self.render_list(
+                    frame,
+                    panes[0],
+                    ListView {
+                        title: "Collections",
+                        items: &self.collection_items,
+                        selected: self.collection_index,
+                        load_state: &self.collection_state,
+                        loading_label: "loading collections...",
+                    },
+                );
+                let right_panes = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Percentage(15), Constraint::Percentage(85)])
+                    .split(panes[1]);
+                let documents = self
+                    .documents
+                    .iter()
+                    .map(document_preview)
+                    .collect::<Vec<_>>();
+                let document_title = self.documents_list_title();
                 let items: Vec<String> = self
                     .storage
                     .aggregations
@@ -2519,7 +2607,7 @@ impl App {
                     .collect();
                 self.render_list(
                     frame,
-                    layout[1],
+                    right_panes[0],
                     ListView {
                         title: "Select Saved Aggregation to Run",
                         items: &items,
@@ -2527,6 +2615,18 @@ impl App {
                         load_state: &self.saved_agg_state,
                         loading_label: "executing aggregation...",
                     },
+                );
+                self.render_list_with_focus(
+                    frame,
+                    right_panes[1],
+                    ListView {
+                        title: &document_title,
+                        items: &documents,
+                        selected: self.document_index,
+                        load_state: &self.document_state,
+                        loading_label: "loading documents...",
+                    },
+                    false,
                 );
             }
             Screen::AddConnectionScopeSelect => {
@@ -2569,10 +2669,30 @@ impl App {
         area: ratatui::layout::Rect,
         view: ListView<'_>,
     ) {
-        let title = Line::from(Span::styled(
-            view.title.to_string(),
-            self.theme.title_style(),
-        ));
+        self.render_list_with_focus(frame, area, view, true);
+    }
+
+    fn render_list_with_focus(
+        &self,
+        frame: &mut ratatui::Frame,
+        area: ratatui::layout::Rect,
+        view: ListView<'_>,
+        focused: bool,
+    ) {
+        let title_style = if focused {
+            self.theme.title_style()
+        } else {
+            self.theme
+                .text_style()
+                .add_modifier(Modifier::DIM)
+                .add_modifier(Modifier::BOLD)
+        };
+        let border_style = if focused {
+            self.theme.border_style()
+        } else {
+            self.theme.border_style().add_modifier(Modifier::DIM)
+        };
+        let title = Line::from(Span::styled(view.title.to_string(), title_style));
         if view.items.is_empty() {
             let (text, style) = match view.load_state {
                 LoadState::Loading => (view.loading_label.to_string(), self.theme.text_style()),
@@ -2584,7 +2704,7 @@ impl App {
             let placeholder = Paragraph::new(text).style(style).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(self.theme.border_style())
+                    .border_style(border_style)
                     .title(title),
             );
             frame.render_widget(placeholder, area);
@@ -2601,13 +2721,13 @@ impl App {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(self.theme.border_style())
+                    .border_style(border_style)
                     .title(title),
             )
             .highlight_style(self.theme.selection_style())
             .highlight_symbol("> ");
         let mut state = ListState::default();
-        state.select(view.selected);
+        state.select(if focused { view.selected } else { None });
         frame.render_stateful_widget(list, area, &mut state);
     }
 
@@ -2735,6 +2855,40 @@ impl App {
             vec![Line::from(hint), Line::from(" ")]
         }
     }
+
+    fn documents_list_title(&self) -> String {
+        let base = format!("Documents (page {})", self.document_page + 1);
+        match &self.document_result_source {
+            DocumentResultSource::Collection => base,
+            DocumentResultSource::SavedQuery { name } => {
+                format!("{base} [saved query: {name}] [c clear applied]")
+            }
+            DocumentResultSource::SavedAggregation { name } => {
+                format!("{base} [saved aggregation: {name}] [c clear applied]")
+            }
+        }
+    }
+
+    fn clear_applied_documents(&mut self) -> Result<()> {
+        if !matches!(self.screen, Screen::Documents | Screen::DocumentView) {
+            return Ok(());
+        }
+        if matches!(
+            self.document_result_source,
+            DocumentResultSource::Collection
+        ) {
+            return Ok(());
+        }
+
+        self.document_result_source = DocumentResultSource::Collection;
+        self.document_page = 0;
+        if let Err(error) = self.start_load_documents(None, DocumentLoadReason::Refresh) {
+            self.set_error_message(&error);
+            return Ok(());
+        }
+        self.message = Some("cleared applied saved results".to_string());
+        Ok(())
+    }
 }
 
 impl KeyBinding {
@@ -2810,7 +2964,8 @@ fn action_keys(action: KeyAction) -> &'static [&'static str] {
         KeyAction::SaveQuery => &["Q"],
         KeyAction::SaveAggregation => &["A"],
         KeyAction::RunSavedQuery => &["r"],
-        KeyAction::RunSavedAggregation => &["g"],
+        KeyAction::RunSavedAggregation => &["a"],
+        KeyAction::ClearApplied => &["c"],
         KeyAction::ToggleHelp => &["?"],
         KeyAction::AddConnection => &["n"],
     }
