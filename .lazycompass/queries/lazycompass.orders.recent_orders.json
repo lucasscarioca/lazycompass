@@ -1,0 +1,5 @@
+{
+  "filter": { "status": "paid" },
+  "sort": { "createdAt": -1 },
+  "limit": 20
+}

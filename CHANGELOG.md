@@ -6,6 +6,7 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+- Breaking: saved queries/aggregations now use JSON files (`.lazycompass/queries/*.json`, `.lazycompass/aggregations/*.json`) with dotted filename IDs (`<name>` shared, `<db>.<collection>.<name>` scoped); TOML saved specs removed.
 - Security: harden defaults and docs with read-only/write guards, pipeline blocking, TLS/auth warnings, logging redaction, permission checks, safe editor usage, and installer verification guidance.
 - Release: publish SHA256 checksum assets; publish checksum signatures when release signing secrets are configured.
 - TUI: run saved queries and aggregations from the documents screen.

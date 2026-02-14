@@ -1,0 +1,6 @@
+{
+  "filter": { "active": true },
+  "projection": { "email": 1, "name": 1, "role": 1 },
+  "sort": { "createdAt": -1 },
+  "limit": 50
+}

@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use lazycompass_core::{
-    Config, LoggingConfig, SavedAggregation, SavedQuery, TimeoutConfig,
+    Config, LoggingConfig, SavedAggregation, SavedQuery, SavedScope, TimeoutConfig,
     connection_security_warnings, redact_sensitive_text,
 };
+use serde_json::Value;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -130,20 +131,20 @@ pub fn load_saved_aggregations(
     load_aggregations_from_dir(&dir)
 }
 
-pub fn saved_query_path(paths: &ConfigPaths, name: &str) -> Result<PathBuf> {
-    let name = normalize_saved_name(name)?;
+pub fn saved_query_path(paths: &ConfigPaths, id: &str) -> Result<PathBuf> {
+    validate_saved_id(id)?;
     let dir = paths.repo_queries_dir().ok_or_else(|| {
         anyhow::anyhow!("repository config not found; run inside a repo with .lazycompass")
     })?;
-    Ok(dir.join(format!("{name}.toml")))
+    Ok(dir.join(format!("{id}.json")))
 }
 
-pub fn saved_aggregation_path(paths: &ConfigPaths, name: &str) -> Result<PathBuf> {
-    let name = normalize_saved_name(name)?;
+pub fn saved_aggregation_path(paths: &ConfigPaths, id: &str) -> Result<PathBuf> {
+    validate_saved_id(id)?;
     let dir = paths.repo_aggregations_dir().ok_or_else(|| {
         anyhow::anyhow!("repository config not found; run inside a repo with .lazycompass")
     })?;
-    Ok(dir.join(format!("{name}.toml")))
+    Ok(dir.join(format!("{id}.json")))
 }
 
 pub fn write_saved_query(
@@ -152,14 +153,19 @@ pub fn write_saved_query(
     overwrite: bool,
 ) -> Result<PathBuf> {
     query.validate().context("invalid saved query")?;
-    let path = saved_query_path(paths, &query.name)?;
+    let parsed_scope = parse_scope_from_saved_id(&query.id)?;
+    if parsed_scope != query.scope {
+        anyhow::bail!("saved query id '{}' does not match its scope", query.id);
+    }
+    let path = saved_query_path(paths, &query.id)?;
     if path.exists() && !overwrite {
-        anyhow::bail!("saved query '{}' already exists", query.name);
+        anyhow::bail!("saved query '{}' already exists", query.id);
     }
     if let Some(parent) = path.parent() {
         ensure_secure_dir(parent)?;
     }
-    let contents = toml::to_string_pretty(query).context("unable to serialize saved query")?;
+    let contents = serde_json::to_string_pretty(&saved_query_payload(query)?)
+        .context("unable to serialize saved query")?;
     write_secure_file(&path, &contents)
         .with_context(|| format!("unable to write saved query {}", path.display()))?;
     Ok(path)
@@ -173,15 +179,27 @@ pub fn write_saved_aggregation(
     aggregation
         .validate()
         .context("invalid saved aggregation")?;
-    let path = saved_aggregation_path(paths, &aggregation.name)?;
+    let parsed_scope = parse_scope_from_saved_id(&aggregation.id)?;
+    if parsed_scope != aggregation.scope {
+        anyhow::bail!(
+            "saved aggregation id '{}' does not match its scope",
+            aggregation.id
+        );
+    }
+    let path = saved_aggregation_path(paths, &aggregation.id)?;
     if path.exists() && !overwrite {
-        anyhow::bail!("saved aggregation '{}' already exists", aggregation.name);
+        anyhow::bail!("saved aggregation '{}' already exists", aggregation.id);
     }
     if let Some(parent) = path.parent() {
         ensure_secure_dir(parent)?;
     }
-    let contents =
-        toml::to_string_pretty(aggregation).context("unable to serialize saved aggregation")?;
+    let pipeline_json: Value = serde_json::from_str(&aggregation.pipeline)
+        .context("saved aggregation pipeline must be valid JSON")?;
+    if !pipeline_json.is_array() {
+        anyhow::bail!("saved aggregation pipeline must be a JSON array");
+    }
+    let contents = serde_json::to_string_pretty(&pipeline_json)
+        .context("unable to serialize saved aggregation")?;
     write_secure_file(&path, &contents)
         .with_context(|| format!("unable to write saved aggregation {}", path.display()))?;
     Ok(path)
@@ -355,10 +373,10 @@ fn permission_warnings(paths: &ConfigPaths) -> Vec<String> {
         append_permission_warning_file(&config_path, &mut warnings);
         let queries_dir = repo_root.join("queries");
         append_permission_warning_dir(&queries_dir, &mut warnings);
-        append_permission_warning_toml_files(&queries_dir, &mut warnings);
+        append_permission_warning_json_files(&queries_dir, &mut warnings);
         let aggregations_dir = repo_root.join("aggregations");
         append_permission_warning_dir(&aggregations_dir, &mut warnings);
-        append_permission_warning_toml_files(&aggregations_dir, &mut warnings);
+        append_permission_warning_json_files(&aggregations_dir, &mut warnings);
     }
     warnings
 }
@@ -405,8 +423,8 @@ fn append_permission_warning_file(path: &Path, warnings: &mut Vec<String>) {
 }
 
 #[cfg(unix)]
-fn append_permission_warning_toml_files(dir: &Path, warnings: &mut Vec<String>) {
-    if let Ok(paths) = collect_toml_paths(dir) {
+fn append_permission_warning_json_files(dir: &Path, warnings: &mut Vec<String>) {
+    if let Ok(paths) = collect_json_paths(dir) {
         for path in paths {
             append_permission_warning_file(&path, warnings);
         }
@@ -602,83 +620,8 @@ fn merge_config(global: Config, repo: Config) -> Config {
     }
 }
 
-fn normalize_saved_name(name: &str) -> Result<String> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        anyhow::bail!("name cannot be empty");
-    }
-
-    // Convert to lowercase and build safe ASCII slug
-    let mut result = String::with_capacity(trimmed.len());
-    let mut prev_was_dash = false;
-
-    for ch in trimmed.to_ascii_lowercase().chars() {
-        match ch {
-            // Keep alphanumeric and allowed separators
-            'a'..='z' | '0'..='9' => {
-                result.push(ch);
-                prev_was_dash = false;
-            }
-            // Collapse whitespace and special chars to single dash
-            ' ' | '\t' | '\n' | '\r' | '-' | '_' | '.' | ',' | ';' | ':' | '!' | '?' | '@'
-            | '#' | '$' | '%' | '^' | '&' | '*' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '+'
-            | '=' | '<' | '>' | '/' | '\\' | '"' | '\'' | '`' | '~' => {
-                if !prev_was_dash && !result.is_empty() {
-                    result.push('-');
-                    prev_was_dash = true;
-                }
-            }
-            // Skip other characters entirely
-            _ => {}
-        }
-    }
-
-    // Trim trailing dash if present
-    if result.ends_with('-') {
-        result.pop();
-    }
-
-    // Ensure non-empty after sanitization
-    if result.is_empty() {
-        anyhow::bail!("name must contain at least one alphanumeric character");
-    }
-
-    // Reject reserved Windows names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
-    let upper = result.to_ascii_uppercase();
-    let reserved = matches!(
-        upper.as_str(),
-        "CON"
-            | "PRN"
-            | "AUX"
-            | "NUL"
-            | "COM1"
-            | "COM2"
-            | "COM3"
-            | "COM4"
-            | "COM5"
-            | "COM6"
-            | "COM7"
-            | "COM8"
-            | "COM9"
-            | "LPT1"
-            | "LPT2"
-            | "LPT3"
-            | "LPT4"
-            | "LPT5"
-            | "LPT6"
-            | "LPT7"
-            | "LPT8"
-            | "LPT9"
-    );
-    if reserved {
-        anyhow::bail!("name cannot be a reserved filename");
-    }
-
-    Ok(result)
-}
-
 fn load_queries_from_dir(dir: &Path) -> Result<(Vec<SavedQuery>, Vec<String>)> {
-    let paths = collect_toml_paths(dir)?;
+    let paths = collect_json_paths(dir)?;
     let mut queries = Vec::with_capacity(paths.len());
     let mut warnings = Vec::new();
 
@@ -686,10 +629,12 @@ fn load_queries_from_dir(dir: &Path) -> Result<(Vec<SavedQuery>, Vec<String>)> {
         let result = (|| -> Result<SavedQuery> {
             let contents = fs::read_to_string(&path)
                 .with_context(|| format!("unable to read saved query file {}", path.display()))?;
-            let query: SavedQuery = toml::from_str(&contents)
-                .with_context(|| format!("invalid TOML in saved query {}", path.display()))?;
-            query
-                .validate()
+            let json: Value = serde_json::from_str(&contents)
+                .with_context(|| format!("invalid JSON in saved query {}", path.display()))?;
+            let id = saved_id_from_path(&path)?;
+            let scope = parse_scope_from_saved_id(&id)
+                .with_context(|| format!("invalid saved query id '{id}'"))?;
+            let query = parse_saved_query_payload(&json, id, scope)
                 .with_context(|| format!("invalid saved query {}", path.display()))?;
             Ok(query)
         })();
@@ -707,7 +652,7 @@ fn load_queries_from_dir(dir: &Path) -> Result<(Vec<SavedQuery>, Vec<String>)> {
 }
 
 fn load_aggregations_from_dir(dir: &Path) -> Result<(Vec<SavedAggregation>, Vec<String>)> {
-    let paths = collect_toml_paths(dir)?;
+    let paths = collect_json_paths(dir)?;
     let mut aggregations = Vec::with_capacity(paths.len());
     let mut warnings = Vec::new();
 
@@ -716,10 +661,12 @@ fn load_aggregations_from_dir(dir: &Path) -> Result<(Vec<SavedAggregation>, Vec<
             let contents = fs::read_to_string(&path).with_context(|| {
                 format!("unable to read saved aggregation file {}", path.display())
             })?;
-            let aggregation: SavedAggregation = toml::from_str(&contents)
-                .with_context(|| format!("invalid TOML in saved aggregation {}", path.display()))?;
-            aggregation
-                .validate()
+            let json: Value = serde_json::from_str(&contents)
+                .with_context(|| format!("invalid JSON in saved aggregation {}", path.display()))?;
+            let id = saved_id_from_path(&path)?;
+            let scope = parse_scope_from_saved_id(&id)
+                .with_context(|| format!("invalid saved aggregation id '{id}'"))?;
+            let aggregation = parse_saved_aggregation_payload(&json, id, scope)
                 .with_context(|| format!("invalid saved aggregation {}", path.display()))?;
             Ok(aggregation)
         })();
@@ -736,7 +683,7 @@ fn load_aggregations_from_dir(dir: &Path) -> Result<(Vec<SavedAggregation>, Vec<
     Ok((aggregations, warnings))
 }
 
-fn collect_toml_paths(dir: &Path) -> Result<Vec<PathBuf>> {
+fn collect_json_paths(dir: &Path) -> Result<Vec<PathBuf>> {
     if !dir.is_dir() {
         return Ok(Vec::new());
     }
@@ -748,13 +695,167 @@ fn collect_toml_paths(dir: &Path) -> Result<Vec<PathBuf>> {
         let entry = entry
             .with_context(|| format!("unable to read directory entry in {}", dir.display()))?;
         let path = entry.path();
-        if path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("toml") {
+        if path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("json") {
             paths.push(path);
         }
     }
 
     paths.sort();
     Ok(paths)
+}
+
+fn saved_id_from_path(path: &Path) -> Result<String> {
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or_else(|| anyhow::anyhow!("saved spec filename is not valid UTF-8"))?;
+    validate_saved_id(stem)?;
+    Ok(stem.to_string())
+}
+
+fn validate_saved_id(id: &str) -> Result<()> {
+    let trimmed = id.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("saved id cannot be empty");
+    }
+    if trimmed != id {
+        anyhow::bail!("saved id cannot have leading or trailing whitespace");
+    }
+    if id.contains('/') || id.contains('\\') {
+        anyhow::bail!("saved id cannot contain path separators");
+    }
+
+    let segments: Vec<&str> = id.split('.').collect();
+    if segments.iter().any(|segment| segment.trim().is_empty()) {
+        anyhow::bail!("saved id cannot contain empty segments");
+    }
+    if segments.len() == 2 {
+        anyhow::bail!(
+            "saved id with two segments is invalid; use <name> or <db>.<collection>.<name>"
+        );
+    }
+    Ok(())
+}
+
+fn parse_scope_from_saved_id(id: &str) -> Result<SavedScope> {
+    validate_saved_id(id)?;
+    let segments: Vec<&str> = id.split('.').collect();
+    if segments.len() == 1 {
+        return Ok(SavedScope::Shared);
+    }
+    let database = segments
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("missing database segment"))?
+        .to_string();
+    let name = segments
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("missing name segment"))?;
+    if name.trim().is_empty() {
+        anyhow::bail!("missing name segment");
+    }
+    let collection = segments[1..segments.len() - 1].join(".");
+    if collection.trim().is_empty() {
+        anyhow::bail!("missing collection segment");
+    }
+    Ok(SavedScope::Scoped {
+        database,
+        collection,
+    })
+}
+
+fn parse_saved_query_payload(json: &Value, id: String, scope: SavedScope) -> Result<SavedQuery> {
+    let object = json
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("saved query payload must be a JSON object"))?;
+    for key in object.keys() {
+        if !matches!(key.as_str(), "filter" | "projection" | "sort" | "limit") {
+            anyhow::bail!("unknown field '{key}' in saved query payload");
+        }
+    }
+
+    let filter = json_field_as_json_string(object, "filter")?;
+    let projection = json_field_as_json_string(object, "projection")?;
+    let sort = json_field_as_json_string(object, "sort")?;
+    let limit = match object.get("limit") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .ok_or_else(|| anyhow::anyhow!("field 'limit' must be a non-negative integer"))?,
+        ),
+    };
+
+    let query = SavedQuery {
+        id,
+        scope,
+        filter,
+        projection,
+        sort,
+        limit,
+    };
+    query.validate().context("invalid saved query data")?;
+    Ok(query)
+}
+
+fn saved_query_payload(query: &SavedQuery) -> Result<Value> {
+    let mut object = serde_json::Map::new();
+    if let Some(filter) = query.filter.as_deref() {
+        object.insert(
+            "filter".to_string(),
+            serde_json::from_str(filter).context("saved query filter must be valid JSON")?,
+        );
+    }
+    if let Some(projection) = query.projection.as_deref() {
+        object.insert(
+            "projection".to_string(),
+            serde_json::from_str(projection)
+                .context("saved query projection must be valid JSON")?,
+        );
+    }
+    if let Some(sort) = query.sort.as_deref() {
+        object.insert(
+            "sort".to_string(),
+            serde_json::from_str(sort).context("saved query sort must be valid JSON")?,
+        );
+    }
+    if let Some(limit) = query.limit {
+        object.insert("limit".to_string(), Value::from(limit));
+    }
+    Ok(Value::Object(object))
+}
+
+fn parse_saved_aggregation_payload(
+    json: &Value,
+    id: String,
+    scope: SavedScope,
+) -> Result<SavedAggregation> {
+    if !json.is_array() {
+        anyhow::bail!("saved aggregation payload must be a JSON array");
+    }
+    let aggregation = SavedAggregation {
+        id,
+        scope,
+        pipeline: serde_json::to_string(json).context("unable to serialize pipeline JSON")?,
+    };
+    aggregation
+        .validate()
+        .context("invalid saved aggregation data")?;
+    Ok(aggregation)
+}
+
+fn json_field_as_json_string(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+) -> Result<Option<String>> {
+    let Some(value) = object.get(field) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let serialized = serde_json::to_string(value)
+        .with_context(|| format!("unable to serialize field '{field}'"))?;
+    Ok(Some(serialized))
 }
 
 #[cfg(test)]
@@ -991,21 +1092,18 @@ uri = "${{{missing_var}}}"
         let repo_root = root.join("repo");
 
         write_file(
-            &repo_root.join(".lazycompass/queries/active_users.toml"),
-            r#"name = "active_users"
-connection = "local"
-database = "lazycompass"
-collection = "users"
-filter = "{ \"active\": true }"
+            &repo_root.join(".lazycompass/queries/lazycompass.users.active_users.json"),
+            r#"{
+  "filter": { "active": true },
+  "projection": { "email": 1 }
+}
 "#,
         );
         write_file(
-            &repo_root.join(".lazycompass/aggregations/orders_by_user.toml"),
-            r#"name = "orders_by_user"
-connection = "local"
-database = "lazycompass"
-collection = "orders"
-pipeline = "[ { \"$group\": { \"_id\": \"$userId\" } } ]"
+            &repo_root.join(".lazycompass/aggregations/orders_by_user.json"),
+            r#"[
+  { "$group": { "_id": "$userId" } }
+]
 "#,
         );
 
@@ -1019,9 +1117,17 @@ pipeline = "[ { \"$group\": { \"_id\": \"$userId\" } } ]"
         assert!(query_warnings.is_empty());
         assert!(aggregation_warnings.is_empty());
         assert_eq!(queries.len(), 1);
-        assert_eq!(queries[0].name, "active_users");
+        assert_eq!(queries[0].id, "lazycompass.users.active_users");
+        assert!(matches!(
+            queries[0].scope,
+            SavedScope::Scoped {
+                ref database,
+                ref collection
+            } if database == "lazycompass" && collection == "users"
+        ));
         assert_eq!(aggregations.len(), 1);
-        assert_eq!(aggregations[0].name, "orders_by_user");
+        assert_eq!(aggregations[0].id, "orders_by_user");
+        assert!(matches!(aggregations[0].scope, SavedScope::Shared));
 
         let _ = fs::remove_dir_all(&root);
         Ok(())
@@ -1033,16 +1139,17 @@ pipeline = "[ { \"$group\": { \"_id\": \"$userId\" } } ]"
         let repo_root = root.join("repo");
 
         write_file(
-            &repo_root.join(".lazycompass/queries/valid.toml"),
-            r#"name = "valid"
-database = "lazycompass"
-collection = "users"
+            &repo_root.join(".lazycompass/queries/valid.json"),
+            r#"{
+  "filter": { "active": true }
+}
 "#,
         );
         write_file(
-            &repo_root.join(".lazycompass/queries/invalid.toml"),
-            r#"name = "invalid"
-collection = "users"
+            &repo_root.join(".lazycompass/queries/db.name.json"),
+            r#"{
+  "filter": { "active": true }
+}
 "#,
         );
 
@@ -1053,7 +1160,7 @@ collection = "users"
         let (queries, warnings) = load_saved_queries(&paths)?;
 
         assert_eq!(queries.len(), 1);
-        assert_eq!(queries[0].name, "valid");
+        assert_eq!(queries[0].id, "valid");
         assert_eq!(warnings.len(), 1);
 
         let _ = fs::remove_dir_all(&root);
@@ -1089,7 +1196,7 @@ uri = "mongodb://two"
     }
 
     #[test]
-    fn write_saved_query_persists_toml() -> Result<()> {
+    fn write_saved_query_persists_json() -> Result<()> {
         let root = temp_root("write_saved_query");
         let repo_root = root.join("repo");
 
@@ -1098,22 +1205,22 @@ uri = "mongodb://two"
             repo_root: Some(repo_root),
         };
         let query = SavedQuery {
-            name: "recent_orders".to_string(),
-            connection: Some("local".to_string()),
-            database: "lazycompass".to_string(),
-            collection: "orders".to_string(),
+            id: "lazycompass.orders.recent_orders".to_string(),
+            scope: SavedScope::Scoped {
+                database: "lazycompass".to_string(),
+                collection: "orders".to_string(),
+            },
             filter: Some("{ \"status\": \"open\" }".to_string()),
             projection: None,
             sort: None,
             limit: Some(50),
-            notes: None,
         };
 
         let path = write_saved_query(&paths, &query, false)?;
         assert!(path.is_file());
         let contents = fs::read_to_string(&path)?;
-        let roundtrip: SavedQuery = toml::from_str(&contents)?;
-        assert_eq!(roundtrip.name, "recent_orders");
+        let json: serde_json::Value = serde_json::from_str(&contents)?;
+        assert_eq!(json.get("limit").and_then(|value| value.as_u64()), Some(50));
 
         let _ = fs::remove_dir_all(&root);
         Ok(())
@@ -1129,12 +1236,9 @@ uri = "mongodb://two"
             repo_root: Some(repo_root),
         };
         let aggregation = SavedAggregation {
-            name: "orders_by_user".to_string(),
-            connection: Some("local".to_string()),
-            database: "lazycompass".to_string(),
-            collection: "orders".to_string(),
+            id: "orders_by_user".to_string(),
+            scope: SavedScope::Shared,
             pipeline: "[]".to_string(),
-            notes: None,
         };
 
         let _ = write_saved_aggregation(&paths, &aggregation, false)?;
@@ -1142,6 +1246,25 @@ uri = "mongodb://two"
 
         let _ = fs::remove_dir_all(&root);
         Ok(())
+    }
+
+    #[test]
+    fn parse_scope_from_saved_id_supports_multidot_collection() -> Result<()> {
+        let scope = parse_scope_from_saved_id("app.foo.bar.users.active")?;
+        assert!(matches!(
+            scope,
+            SavedScope::Scoped {
+                ref database,
+                ref collection
+            } if database == "app" && collection == "foo.bar.users"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_scope_from_saved_id_rejects_two_segments() {
+        let err = parse_scope_from_saved_id("app.users").expect_err("should fail");
+        assert!(err.to_string().contains("two segments"));
     }
 
     #[cfg(unix)]
@@ -1166,8 +1289,8 @@ uri = "mongodb://two"
             &repo_config_root.join("queries"),
             fs::Permissions::from_mode(0o755),
         )?;
-        let query_path = repo_config_root.join("queries/query.toml");
-        write_file(&query_path, "name = \"query\"\n");
+        let query_path = repo_config_root.join("queries/query.json");
+        write_file(&query_path, "{}\n");
         fs::set_permissions(&query_path, fs::Permissions::from_mode(0o644))?;
 
         let paths = ConfigPaths {

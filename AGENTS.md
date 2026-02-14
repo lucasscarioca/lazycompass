@@ -6,7 +6,7 @@ This file guides agentic coding assistants working in this repo.
 
 - Rust workspace with multiple crates
 - MongoDB TUI + CLI client
-- Config + queries stored as TOML, repo-committable
+- Config stored as TOML and saved specs stored as JSON, repo-committable
 - Local playground via Docker for testing
 
 Workspace crates:
@@ -113,8 +113,8 @@ docker compose -f dev/mongodb/docker-compose.yml up -d
 
 - Global config: `~/.config/lazycompass/`
 - Repo config: `.lazycompass/`
-- Saved queries: `.lazycompass/queries/*.toml`
-- Saved aggregations: `.lazycompass/aggregations/*.toml`
+- Saved queries: `.lazycompass/queries/*.json`
+- Saved aggregations: `.lazycompass/aggregations/*.json`
 - Repo config overrides global; global is fallback
 
 ## Code Style Guidelines
@@ -158,7 +158,7 @@ Follow Rust 2024 edition idioms and keep changes minimal and consistent.
 ### Serialization and Config
 
 - Use `serde` for config and persisted data
-- Keep TOML schemas stable; document changes in `SPEC.md`
+- Keep config TOML and saved spec JSON schemas stable; document changes in `SPEC.md`
 - Query/aggregation `filter`/`pipeline` stored as JSON strings
 
 ### Async and Runtime
@@ -210,5 +210,5 @@ Follow Rust 2024 edition idioms and keep changes minimal and consistent.
 - Update `CHANGELOG.md` for user-visible changes; keep entries scoped to the release.
 - Follow `RELEASE.md` for versioning/tagging and release steps before publishing.
 - Run the checklist in `SECURITY.md` for dependency/config changes that affect security posture.
-- Sync config defaults and examples per `CONFIGURATION.md` when changing TOML schemas or paths.
+- Sync config defaults and examples per `CONFIGURATION.md` when changing config/saved spec schemas or paths.
 - Validate query/aggregation format updates against `QUERY_FORMAT.md`, and note any schema changes in `CHANGELOG.md`.

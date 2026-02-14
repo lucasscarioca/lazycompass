@@ -1184,6 +1184,7 @@ dependencies = [
  "dotenvy",
  "lazycompass-core",
  "serde",
+ "serde_json",
  "toml",
 ]
 

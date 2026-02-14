@@ -125,7 +125,7 @@ query_ms = 30000
 
 Saved queries and aggregations are loaded from repo-only files:
 
-- `.lazycompass/queries/*.toml`
-- `.lazycompass/aggregations/*.toml`
+- `.lazycompass/queries/*.json`
+- `.lazycompass/aggregations/*.json`
 
 See `QUERY_FORMAT.md` for schemas and examples.

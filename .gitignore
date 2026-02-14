@@ -4,4 +4,11 @@
 .DS_Store
 .lazycompass/queries/
 .lazycompass/aggregations/
+!.lazycompass/queries/
+!.lazycompass/aggregations/
+!.lazycompass/queries/lazycompass.users.active_users.json
+!.lazycompass/queries/lazycompass.orders.recent_orders.json
+!.lazycompass/queries/new_query.json
+!.lazycompass/aggregations/lazycompass.orders.orders_by_user.json
+!.lazycompass/aggregations/agregacao.json
 dev/

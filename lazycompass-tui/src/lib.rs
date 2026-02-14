@@ -6,7 +6,8 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use lazycompass_core::{
-    Config, ConnectionSpec, SavedAggregation, SavedQuery, WriteGuard, redact_sensitive_text,
+    Config, ConnectionSpec, SavedAggregation, SavedQuery, SavedScope, WriteGuard,
+    redact_sensitive_text,
 };
 use lazycompass_mongo::{
     Bson, Document, DocumentDeleteSpec, DocumentInsertSpec, DocumentListSpec, DocumentReplaceSpec,
@@ -356,6 +357,8 @@ const ADD_CONNECTION_SCOPE_HINTS: &[HintGroup] = &[
     },
 ];
 
+const SAVE_SCOPE_HINTS: &[HintGroup] = ADD_CONNECTION_SCOPE_HINTS;
+
 const DOCUMENT_VIEW_HINTS: &[HintGroup] = &[
     HintGroup {
         actions: HINT_SCROLL,
@@ -454,6 +457,8 @@ enum Screen {
     DocumentView,
     SavedQuerySelect,
     SavedAggregationSelect,
+    SaveQueryScopeSelect,
+    SaveAggregationScopeSelect,
     AddConnectionScopeSelect,
 }
 
@@ -617,6 +622,8 @@ struct App {
     document_result_source: DocumentResultSource,
     saved_query_index: Option<usize>,
     saved_agg_index: Option<usize>,
+    save_query_scope_index: Option<usize>,
+    save_agg_scope_index: Option<usize>,
     add_connection_scope_index: Option<usize>,
 }
 
@@ -683,6 +690,8 @@ impl App {
             document_result_source: DocumentResultSource::Collection,
             saved_query_index: None,
             saved_agg_index: None,
+            save_query_scope_index: Some(0),
+            save_agg_scope_index: Some(0),
             add_connection_scope_index: Some(0),
         })
     }
@@ -1220,35 +1229,48 @@ impl App {
     }
 
     fn save_query(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+        let _ = terminal;
         if self.screen != Screen::Documents {
             return Ok(());
         }
         if self.block_if_read_only("save queries") {
             return Ok(());
         }
-        let result = (|| -> Result<()> {
-            let (connection, database, collection) = self.selected_context()?;
-            let template = SavedQuery {
-                name: "new_query".to_string(),
-                connection: Some(connection),
-                database,
-                collection,
-                filter: None,
-                projection: None,
-                sort: None,
-                limit: None,
-                notes: None,
-            };
-            let action = PendingEditorAction::SaveQuery { template };
-            let Some(_) = self.ensure_editor_command(action.clone())? else {
-                return Ok(());
-            };
-            self.perform_editor_action(action, terminal)
-        })();
+        self.save_query_scope_index = Some(0);
+        self.screen = Screen::SaveQueryScopeSelect;
+        self.message = Some("select save mode for query".to_string());
+        Ok(())
+    }
 
-        if let Err(error) = result {
-            self.set_error_message(&error);
-        }
+    fn select_query_save_scope(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<()> {
+        let scope = match self.save_query_scope_index {
+            Some(0) => SavedScope::Shared,
+            Some(1) => {
+                let (_, database, collection) = self.selected_context()?;
+                SavedScope::Scoped {
+                    database,
+                    collection,
+                }
+            }
+            _ => return Ok(()),
+        };
+        let template = SavedQuery {
+            id: default_saved_id("query", &scope),
+            scope,
+            filter: None,
+            projection: None,
+            sort: None,
+            limit: None,
+        };
+        self.screen = Screen::Documents;
+        let action = PendingEditorAction::SaveQuery { template };
+        let Some(_) = self.ensure_editor_command(action.clone())? else {
+            return Ok(());
+        };
+        self.perform_editor_action(action, terminal)?;
         Ok(())
     }
 
@@ -1256,32 +1278,45 @@ impl App {
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> Result<()> {
+        let _ = terminal;
         if self.screen != Screen::Documents {
             return Ok(());
         }
         if self.block_if_read_only("save aggregations") {
             return Ok(());
         }
-        let result = (|| -> Result<()> {
-            let (connection, database, collection) = self.selected_context()?;
-            let template = SavedAggregation {
-                name: "new_aggregation".to_string(),
-                connection: Some(connection),
-                database,
-                collection,
-                pipeline: "[]".to_string(),
-                notes: None,
-            };
-            let action = PendingEditorAction::SaveAggregation { template };
-            let Some(_) = self.ensure_editor_command(action.clone())? else {
-                return Ok(());
-            };
-            self.perform_editor_action(action, terminal)
-        })();
+        self.save_agg_scope_index = Some(0);
+        self.screen = Screen::SaveAggregationScopeSelect;
+        self.message = Some("select save mode for aggregation".to_string());
+        Ok(())
+    }
 
-        if let Err(error) = result {
-            self.set_error_message(&error);
-        }
+    fn select_aggregation_save_scope(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<()> {
+        let scope = match self.save_agg_scope_index {
+            Some(0) => SavedScope::Shared,
+            Some(1) => {
+                let (_, database, collection) = self.selected_context()?;
+                SavedScope::Scoped {
+                    database,
+                    collection,
+                }
+            }
+            _ => return Ok(()),
+        };
+        let template = SavedAggregation {
+            id: default_saved_id("aggregation", &scope),
+            scope,
+            pipeline: "[]".to_string(),
+        };
+        self.screen = Screen::Documents;
+        let action = PendingEditorAction::SaveAggregation { template };
+        let Some(_) = self.ensure_editor_command(action.clone())? else {
+            return Ok(());
+        };
+        self.perform_editor_action(action, terminal)?;
         Ok(())
     }
 
@@ -1600,19 +1635,18 @@ impl App {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("editor command missing"))?;
         let initial =
-            toml::to_string_pretty(&template).context("unable to render query template")?;
+            render_query_payload_template(&template).context("unable to render query template")?;
         let contents = self.open_editor(terminal, editor, "query", &initial)?;
         if is_editor_cancelled(&contents, &initial) {
             self.message = Some("cancelled".to_string());
             return Ok(());
         }
-        let query: SavedQuery =
-            toml::from_str(&contents).context("invalid TOML for saved query")?;
+        let query = parse_query_payload_input(&contents, &template)?;
         query.validate().context("invalid saved query")?;
-        let path = saved_query_path(&self.paths, &query.name)?;
+        let path = saved_query_path(&self.paths, &query.id)?;
         if path.exists() {
             self.confirm = Some(ConfirmState {
-                prompt: format!("overwrite saved query '{}'? (y/n)", query.name),
+                prompt: format!("overwrite saved query '{}'? (y/n)", query.id),
                 action: ConfirmAction::OverwriteQuery { query },
                 input: String::new(),
                 required: None,
@@ -1634,22 +1668,21 @@ impl App {
             .editor_command
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("editor command missing"))?;
-        let initial =
-            toml::to_string_pretty(&template).context("unable to render aggregation template")?;
+        let initial = render_aggregation_payload_template(&template)
+            .context("unable to render aggregation template")?;
         let contents = self.open_editor(terminal, editor, "aggregation", &initial)?;
         if is_editor_cancelled(&contents, &initial) {
             self.message = Some("cancelled".to_string());
             return Ok(());
         }
-        let aggregation: SavedAggregation =
-            toml::from_str(&contents).context("invalid TOML for saved aggregation")?;
+        let aggregation = parse_aggregation_payload_input(&contents, &template)?;
         aggregation
             .validate()
             .context("invalid saved aggregation")?;
-        let path = saved_aggregation_path(&self.paths, &aggregation.name)?;
+        let path = saved_aggregation_path(&self.paths, &aggregation.id)?;
         if path.exists() {
             self.confirm = Some(ConfirmState {
-                prompt: format!("overwrite saved aggregation '{}'? (y/n)", aggregation.name),
+                prompt: format!("overwrite saved aggregation '{}'? (y/n)", aggregation.id),
                 action: ConfirmAction::OverwriteAggregation { aggregation },
                 input: String::new(),
                 required: None,
@@ -1736,7 +1769,7 @@ impl App {
             .storage
             .queries
             .iter_mut()
-            .find(|saved| saved.name == query.name)
+            .find(|saved| saved.id == query.id)
         {
             *existing = query;
         } else {
@@ -1749,7 +1782,7 @@ impl App {
             .storage
             .aggregations
             .iter_mut()
-            .find(|saved| saved.name == aggregation.name)
+            .find(|saved| saved.id == aggregation.id)
         {
             *existing = aggregation;
         } else {
@@ -1782,6 +1815,12 @@ impl App {
                 self.storage.aggregations.len(),
                 0,
             ),
+            Screen::SaveQueryScopeSelect => {
+                Self::select_index(&mut self.save_query_scope_index, 2, 0)
+            }
+            Screen::SaveAggregationScopeSelect => {
+                Self::select_index(&mut self.save_agg_scope_index, 2, 0)
+            }
             Screen::AddConnectionScopeSelect => {
                 Self::select_index(&mut self.add_connection_scope_index, 3, 0)
             }
@@ -1807,6 +1846,10 @@ impl App {
             }
             Screen::SavedAggregationSelect => {
                 Self::select_last(&mut self.saved_agg_index, self.storage.aggregations.len())
+            }
+            Screen::SaveQueryScopeSelect => Self::select_last(&mut self.save_query_scope_index, 2),
+            Screen::SaveAggregationScopeSelect => {
+                Self::select_last(&mut self.save_agg_scope_index, 2)
             }
             Screen::AddConnectionScopeSelect => {
                 Self::select_last(&mut self.add_connection_scope_index, 3)
@@ -1839,6 +1882,12 @@ impl App {
                 self.storage.aggregations.len(),
                 -1,
             ),
+            Screen::SaveQueryScopeSelect => {
+                Self::move_selection(&mut self.save_query_scope_index, 2, -1)
+            }
+            Screen::SaveAggregationScopeSelect => {
+                Self::move_selection(&mut self.save_agg_scope_index, 2, -1)
+            }
             Screen::AddConnectionScopeSelect => Self::move_selection(
                 &mut self.add_connection_scope_index,
                 3, // Session-only, Repo, Global
@@ -1872,6 +1921,12 @@ impl App {
                 self.storage.aggregations.len(),
                 1,
             ),
+            Screen::SaveQueryScopeSelect => {
+                Self::move_selection(&mut self.save_query_scope_index, 2, 1)
+            }
+            Screen::SaveAggregationScopeSelect => {
+                Self::move_selection(&mut self.save_agg_scope_index, 2, 1)
+            }
             Screen::AddConnectionScopeSelect => Self::move_selection(
                 &mut self.add_connection_scope_index,
                 3, // Session-only, Repo, Global
@@ -1889,6 +1944,14 @@ impl App {
             Screen::DocumentView => self.screen = Screen::Documents,
             Screen::SavedQuerySelect => self.screen = Screen::Documents,
             Screen::SavedAggregationSelect => self.screen = Screen::Documents,
+            Screen::SaveQueryScopeSelect => {
+                self.screen = Screen::Documents;
+                self.save_query_scope_index = Some(0);
+            }
+            Screen::SaveAggregationScopeSelect => {
+                self.screen = Screen::Documents;
+                self.save_agg_scope_index = Some(0);
+            }
             Screen::AddConnectionScopeSelect => {
                 self.screen = Screen::Connections;
                 self.add_connection_scope_index = Some(0);
@@ -1942,6 +2005,16 @@ impl App {
             }
             Screen::SavedAggregationSelect => {
                 if let Err(error) = self.start_execute_saved_aggregation() {
+                    self.set_error_message(&error);
+                }
+            }
+            Screen::SaveQueryScopeSelect => {
+                if let Err(error) = self.select_query_save_scope(terminal) {
+                    self.set_error_message(&error);
+                }
+            }
+            Screen::SaveAggregationScopeSelect => {
+                if let Err(error) = self.select_aggregation_save_scope(terminal) {
                     self.set_error_message(&error);
                 }
             }
@@ -2023,37 +2096,20 @@ impl App {
             .get(query_index)
             .ok_or_else(|| anyhow::anyhow!("select a saved query"))?
             .clone();
-
-        // Use current context as fallback if saved fields are empty
-        let connection = if saved
-            .connection
-            .as_ref()
-            .map(|s| s.trim().is_empty())
-            .unwrap_or(true)
-        {
-            self.selected_connection().map(|c| c.name.clone())
-        } else {
-            saved.connection.clone()
-        };
-
-        let database = if saved.database.trim().is_empty() {
-            self.selected_database()
-                .ok_or_else(|| {
-                    anyhow::anyhow!("no database selected and saved query has no database")
-                })?
-                .to_string()
-        } else {
-            saved.database.clone()
-        };
-
-        let collection = if saved.collection.trim().is_empty() {
-            self.selected_collection()
-                .ok_or_else(|| {
-                    anyhow::anyhow!("no collection selected and saved query has no collection")
-                })?
-                .to_string()
-        } else {
-            saved.collection.clone()
+        let connection = self.selected_connection().map(|c| c.name.clone());
+        let (database, collection) = match &saved.scope {
+            SavedScope::Scoped {
+                database,
+                collection,
+            } => (database.clone(), collection.clone()),
+            SavedScope::Shared => (
+                self.selected_database()
+                    .ok_or_else(|| anyhow::anyhow!("select a database for shared saved queries"))?
+                    .to_string(),
+                self.selected_collection()
+                    .ok_or_else(|| anyhow::anyhow!("select a collection for shared saved queries"))?
+                    .to_string(),
+            ),
         };
 
         let spec = lazycompass_mongo::QuerySpec {
@@ -2070,8 +2126,8 @@ impl App {
         let request_id = self.next_load_id();
         self.saved_query_load_id = Some(request_id);
         self.saved_query_state = LoadState::Loading;
-        self.message = Some(format!("executing saved query '{}'...", saved.name));
-        let saved_name = saved.name.clone();
+        self.message = Some(format!("executing saved query '{}'...", saved.id));
+        let saved_name = saved.id.clone();
         let sender = self.load_tx.clone();
         self.runtime.spawn(async move {
             let executor = MongoExecutor::new();
@@ -2098,39 +2154,24 @@ impl App {
             .get(agg_index)
             .ok_or_else(|| anyhow::anyhow!("select a saved aggregation"))?
             .clone();
-
-        // Use current context as fallback if saved fields are empty
-        let connection = if saved
-            .connection
-            .as_ref()
-            .map(|s| s.trim().is_empty())
-            .unwrap_or(true)
-        {
-            self.selected_connection().map(|c| c.name.clone())
-        } else {
-            saved.connection.clone()
-        };
-
-        let database = if saved.database.trim().is_empty() {
-            self.selected_database()
-                .ok_or_else(|| {
-                    anyhow::anyhow!("no database selected and saved aggregation has no database")
-                })?
-                .to_string()
-        } else {
-            saved.database.clone()
-        };
-
-        let collection = if saved.collection.trim().is_empty() {
-            self.selected_collection()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "no collection selected and saved aggregation has no collection"
-                    )
-                })?
-                .to_string()
-        } else {
-            saved.collection.clone()
+        let connection = self.selected_connection().map(|c| c.name.clone());
+        let (database, collection) = match &saved.scope {
+            SavedScope::Scoped {
+                database,
+                collection,
+            } => (database.clone(), collection.clone()),
+            SavedScope::Shared => (
+                self.selected_database()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("select a database for shared saved aggregations")
+                    })?
+                    .to_string(),
+                self.selected_collection()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("select a collection for shared saved aggregations")
+                    })?
+                    .to_string(),
+            ),
         };
 
         let spec = lazycompass_mongo::AggregationSpec {
@@ -2144,8 +2185,8 @@ impl App {
         let request_id = self.next_load_id();
         self.saved_agg_load_id = Some(request_id);
         self.saved_agg_state = LoadState::Loading;
-        self.message = Some(format!("executing saved aggregation '{}'...", saved.name));
-        let saved_name = saved.name.clone();
+        self.message = Some(format!("executing saved aggregation '{}'...", saved.id));
+        let saved_name = saved.id.clone();
         let sender = self.load_tx.clone();
         self.runtime.spawn(async move {
             let executor = MongoExecutor::new();
@@ -2531,15 +2572,7 @@ impl App {
                     .storage
                     .queries
                     .iter()
-                    .map(|q| {
-                        let context = format!(
-                            "{} / {} / {}",
-                            q.connection.as_deref().unwrap_or("-"),
-                            q.database,
-                            q.collection
-                        );
-                        format!("{} ({context})", q.name)
-                    })
+                    .map(|q| format!("{} ({})", q.id, saved_scope_label(&q.scope)))
                     .collect();
                 self.render_list(
                     frame,
@@ -2595,15 +2628,7 @@ impl App {
                     .storage
                     .aggregations
                     .iter()
-                    .map(|a| {
-                        let context = format!(
-                            "{} / {} / {}",
-                            a.connection.as_deref().unwrap_or("-"),
-                            a.database,
-                            a.collection
-                        );
-                        format!("{} ({context})", a.name)
-                    })
+                    .map(|a| format!("{} ({})", a.id, saved_scope_label(&a.scope)))
                     .collect();
                 self.render_list(
                     frame,
@@ -2627,6 +2652,40 @@ impl App {
                         loading_label: "loading documents...",
                     },
                     false,
+                );
+            }
+            Screen::SaveQueryScopeSelect => {
+                let items = vec![
+                    "Shared (uses current db/collection when running)".to_string(),
+                    "Scoped (encode current db/collection in filename)".to_string(),
+                ];
+                self.render_list(
+                    frame,
+                    layout[1],
+                    ListView {
+                        title: "Select Query Save Scope",
+                        items: &items,
+                        selected: self.save_query_scope_index,
+                        load_state: &LoadState::Idle,
+                        loading_label: "",
+                    },
+                );
+            }
+            Screen::SaveAggregationScopeSelect => {
+                let items = vec![
+                    "Shared (uses current db/collection when running)".to_string(),
+                    "Scoped (encode current db/collection in filename)".to_string(),
+                ];
+                self.render_list(
+                    frame,
+                    layout[1],
+                    ListView {
+                        title: "Select Aggregation Save Scope",
+                        items: &items,
+                        selected: self.save_agg_scope_index,
+                        load_state: &LoadState::Idle,
+                        loading_label: "",
+                    },
                 );
             }
             Screen::AddConnectionScopeSelect => {
@@ -2774,6 +2833,8 @@ impl App {
             Screen::DocumentView => "Document",
             Screen::SavedQuerySelect => "Run Saved Query",
             Screen::SavedAggregationSelect => "Run Saved Aggregation",
+            Screen::SaveQueryScopeSelect => "Save Query",
+            Screen::SaveAggregationScopeSelect => "Save Aggregation",
             Screen::AddConnectionScopeSelect => "Add Connection",
         };
         let connection = self
@@ -2891,6 +2952,131 @@ impl App {
     }
 }
 
+fn render_query_payload_template(template: &SavedQuery) -> Result<String> {
+    let mut object = serde_json::Map::new();
+    if let Some(filter) = template.filter.as_deref() {
+        object.insert(
+            "filter".to_string(),
+            serde_json::from_str(filter).context("saved query filter must be valid JSON")?,
+        );
+    }
+    if let Some(projection) = template.projection.as_deref() {
+        object.insert(
+            "projection".to_string(),
+            serde_json::from_str(projection)
+                .context("saved query projection must be valid JSON")?,
+        );
+    }
+    if let Some(sort) = template.sort.as_deref() {
+        object.insert(
+            "sort".to_string(),
+            serde_json::from_str(sort).context("saved query sort must be valid JSON")?,
+        );
+    }
+    if let Some(limit) = template.limit {
+        object.insert("limit".to_string(), serde_json::Value::from(limit));
+    }
+    serde_json::to_string_pretty(&serde_json::Value::Object(object))
+        .context("unable to serialize query template")
+}
+
+fn parse_query_payload_input(contents: &str, template: &SavedQuery) -> Result<SavedQuery> {
+    let value: serde_json::Value =
+        serde_json::from_str(contents).context("invalid JSON for saved query")?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("saved query payload must be a JSON object"))?;
+    for key in object.keys() {
+        if !matches!(key.as_str(), "filter" | "projection" | "sort" | "limit") {
+            anyhow::bail!("unknown field '{key}' in saved query payload");
+        }
+    }
+    let filter = json_field_as_string(object, "filter")?;
+    let projection = json_field_as_string(object, "projection")?;
+    let sort = json_field_as_string(object, "sort")?;
+    let limit = match object.get("limit") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .ok_or_else(|| anyhow::anyhow!("field 'limit' must be a non-negative integer"))?,
+        ),
+    };
+    Ok(SavedQuery {
+        id: template.id.clone(),
+        scope: template.scope.clone(),
+        filter,
+        projection,
+        sort,
+        limit,
+    })
+}
+
+fn render_aggregation_payload_template(template: &SavedAggregation) -> Result<String> {
+    let pipeline: serde_json::Value = serde_json::from_str(&template.pipeline)
+        .context("saved aggregation pipeline must be valid JSON")?;
+    if !pipeline.is_array() {
+        anyhow::bail!("saved aggregation pipeline must be a JSON array");
+    }
+    serde_json::to_string_pretty(&pipeline).context("unable to serialize aggregation template")
+}
+
+fn parse_aggregation_payload_input(
+    contents: &str,
+    template: &SavedAggregation,
+) -> Result<SavedAggregation> {
+    let pipeline: serde_json::Value =
+        serde_json::from_str(contents).context("invalid JSON for saved aggregation")?;
+    if !pipeline.is_array() {
+        anyhow::bail!("saved aggregation payload must be a JSON array");
+    }
+    Ok(SavedAggregation {
+        id: template.id.clone(),
+        scope: template.scope.clone(),
+        pipeline: serde_json::to_string(&pipeline).context("unable to serialize pipeline JSON")?,
+    })
+}
+
+fn json_field_as_string(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<Option<String>> {
+    let Some(value) = object.get(field) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let serialized = serde_json::to_string(value)
+        .with_context(|| format!("unable to serialize field '{field}'"))?;
+    Ok(Some(serialized))
+}
+
+fn saved_scope_label(scope: &SavedScope) -> String {
+    match scope {
+        SavedScope::Shared => "shared".to_string(),
+        SavedScope::Scoped {
+            database,
+            collection,
+        } => format!("{database}.{collection}"),
+    }
+}
+
+fn default_saved_id(kind: &str, scope: &SavedScope) -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let name = format!("{kind}_{millis}");
+    match scope {
+        SavedScope::Shared => name,
+        SavedScope::Scoped {
+            database,
+            collection,
+        } => format!("{database}.{collection}.{name}"),
+    }
+}
+
 impl KeyBinding {
     fn matches(&self, key: KeyEvent) -> bool {
         self.code == key.code && self.modifiers == key.modifiers
@@ -2943,6 +3129,8 @@ fn hint_groups(screen: Screen) -> &'static [HintGroup] {
         Screen::DocumentView => DOCUMENT_VIEW_HINTS,
         Screen::SavedQuerySelect => SAVED_QUERY_HINTS,
         Screen::SavedAggregationSelect => SAVED_AGGREGATION_HINTS,
+        Screen::SaveQueryScopeSelect => SAVE_SCOPE_HINTS,
+        Screen::SaveAggregationScopeSelect => SAVE_SCOPE_HINTS,
         Screen::AddConnectionScopeSelect => ADD_CONNECTION_SCOPE_HINTS,
     }
 }
