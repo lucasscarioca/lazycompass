@@ -39,6 +39,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    Init(InitArgs),
     Query(QueryArgs),
     Agg(AggArgs),
     Insert(InsertArgs),
@@ -134,6 +135,17 @@ struct ConfigArgs {
     repo: bool,
 }
 
+#[derive(Args)]
+struct InitArgs {
+    /// Use global config instead of repo config
+    #[arg(long, group = "scope")]
+    global: bool,
+
+    /// Use repo config instead of global config
+    #[arg(long, group = "scope")]
+    repo: bool,
+}
+
 #[derive(Subcommand)]
 enum ConfigCommands {
     /// Open the config file in your default editor
@@ -165,6 +177,9 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Some(Commands::Init(args)) => {
+            run_init(args)?;
+        }
         Some(Commands::Query(args)) => run_query(
             args,
             cli.write_enabled,
@@ -912,15 +927,7 @@ fn format_bson(value: &Bson) -> String {
 fn run_config(args: ConfigArgs) -> Result<()> {
     let cwd = std::env::current_dir().context("unable to resolve current directory")?;
     let paths = ConfigPaths::resolve_from(&cwd)?;
-
-    // Determine scope: explicit --global flag takes precedence, otherwise use repo if available
-    let scope = if args.global {
-        ConfigScope::Global
-    } else if args.repo || paths.repo_config_path().is_some() {
-        ConfigScope::Repo
-    } else {
-        ConfigScope::Global
-    };
+    let scope = resolve_config_scope(&paths, args.global, args.repo);
 
     match args.command {
         ConfigCommands::Edit => run_config_edit(&paths, scope),
@@ -928,10 +935,27 @@ fn run_config(args: ConfigArgs) -> Result<()> {
     }
 }
 
+fn run_init(args: InitArgs) -> Result<()> {
+    let cwd = std::env::current_dir().context("unable to resolve current directory")?;
+    let paths = ConfigPaths::resolve_from(&cwd)?;
+    let scope = resolve_config_scope(&paths, args.global, args.repo);
+    run_config_add_connection(&paths, scope)
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ConfigScope {
     Global,
     Repo,
+}
+
+fn resolve_config_scope(paths: &ConfigPaths, global: bool, repo: bool) -> ConfigScope {
+    if global {
+        return ConfigScope::Global;
+    }
+    if repo || paths.repo_config_path().is_some() {
+        return ConfigScope::Repo;
+    }
+    ConfigScope::Global
 }
 
 fn run_config_edit(paths: &ConfigPaths, scope: ConfigScope) -> Result<()> {
@@ -1231,5 +1255,29 @@ mod tests {
         };
 
         assert!(build_agg_request(args).is_err());
+    }
+
+    #[test]
+    fn resolve_config_scope_defaults_to_repo_when_available() {
+        let paths = ConfigPaths {
+            global_root: "/tmp/global".into(),
+            repo_root: Some("/tmp/repo".into()),
+        };
+        assert!(matches!(
+            resolve_config_scope(&paths, false, false),
+            ConfigScope::Repo
+        ));
+    }
+
+    #[test]
+    fn resolve_config_scope_defaults_to_global_without_repo() {
+        let paths = ConfigPaths {
+            global_root: "/tmp/global".into(),
+            repo_root: None,
+        };
+        assert!(matches!(
+            resolve_config_scope(&paths, false, false),
+            ConfigScope::Global
+        ));
     }
 }

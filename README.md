@@ -10,13 +10,13 @@ LazyCompass is pre-1.0. Breaking changes may happen in minor releases until 1.0;
 
 ## Installation
 
-Prebuilt binaries from GitHub releases (no Rust required):
+Prebuilt binaries from GitHub releases:
 
 ```bash
 ./install.sh
 ```
 
-Install via curl (no Rust required):
+Install via curl:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lucasscarioca/lazycompass/main/install.sh | bash
@@ -32,13 +32,6 @@ Upgrade (re-runs the installer):
 
 ```bash
 lazycompass upgrade
-```
-
-Override the installer URL (optional):
-
-```bash
-LAZYCOMPASS_INSTALL_URL=https://raw.githubusercontent.com/lucasscarioca/lazycompass/main/install.sh \
-  lazycompass upgrade
 ```
 
 Verification:
@@ -59,17 +52,50 @@ sha256sum -c lazycompass-linux-x64.tar.gz.sha256 2>/dev/null || shasum -a 256 -c
 
 ## Usage
 
-Start the TUI:
+Quick start (existing repo):
+
+1. `cd` into the repo (or any subdirectory inside it).
+2. Run the setup wizard (creates/updates `.lazycompass/config.toml` and adds a connection):
+
+```bash
+lazycompass init
+```
+
+3. If your connection URI in config uses env interpolation (example below), set that variable:
+
+```toml
+[[connections]]
+name = "primary"
+uri = "${MONGO_URI}"
+default_database = "app"
+```
+
+```bash
+export MONGO_URI='mongodb://localhost:27017/app'
+```
+
+or put it in repo root `.env`:
+
+```dotenv
+MONGO_URI=mongodb://localhost:27017/app
+```
+
+4. Start LazyCompass:
 
 ```bash
 lazycompass
 ```
 
+Env var naming:
+
+- LazyCompass does not require a fixed URI var name. It resolves whatever you reference in config (`${VAR}`).
+- `MONGO_URI` is a convention used in docs/examples; `MONGODB_URL` or `DATABASE_URL` also work if config uses that exact name.
+- `.env` is auto-loaded from repo root for repo config and from `~/.config/lazycompass/.env` for global config.
+- Real environment variables take precedence over `.env` values.
+
 Write actions open your `$VISUAL` or `$EDITOR` for JSON/TOML editing (command + args only; no shell expansion).
 
 Documents screen keys: `i` insert, `e` edit, `d` delete, `Q` save query, `A` save aggregation, `r` run saved query, `g` run saved aggregation. Connections screen key: `n` add connection.
-
-Optional `.env` loading is supported for config interpolation (see `CONFIGURATION.md`).
 
 Run a saved query or aggregation:
 
@@ -88,6 +114,7 @@ lazycompass agg --db lazycompass --collection orders --pipeline '[{"$group": {"_
 Manage config and data:
 
 ```bash
+lazycompass init
 lazycompass config edit
 lazycompass config add-connection
 lazycompass insert --db lazycompass --collection users --document '{"email": "a@example.com"}'

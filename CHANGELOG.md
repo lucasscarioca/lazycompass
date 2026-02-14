@@ -12,6 +12,7 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 - TUI: add connection flow from the connections screen.
 - TUI: allow canceling editor flows without mutating data.
 - CLI: manage config via `config edit` and `config add-connection`.
+- CLI: add `init` onboarding command to bootstrap config and first connection.
 - CLI: add insert and update subcommands for documents.
 - Config: load optional `.env` files for interpolation without overriding real env vars.
 - Tests: print explicit skip reason when the playground integration test is not enabled.
