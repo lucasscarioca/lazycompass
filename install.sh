@@ -335,10 +335,10 @@ elif [ -n "$requested_version" ] || [ -n "$repo_override" ]; then
     exit 1
   fi
   download_and_install "$install_repo"
-elif [ -f "$source_dir/Cargo.toml" ]; then
-  install_from_source
 elif [ -n "$install_repo" ]; then
   download_and_install "$install_repo"
+elif [ -f "$source_dir/Cargo.toml" ]; then
+  install_from_source
 else
   echo -e "${RED}Error: no install method available${NC}" >&2
   echo -e "Use --from-source, --binary, or --repo" >&2
