@@ -6,7 +6,6 @@ Thanks for helping build LazyCompass. This file covers development setup and wor
 
 - Rust (LTS toolchain, edition 2024)
 - Docker (optional, for the local playground)
-- Lefthook (optional, for git hooks)
 
 ## Workspace Layout
 
@@ -77,20 +76,10 @@ docker compose -f dev/mongodb/docker-compose.yml down -v
 docker compose -f dev/mongodb/docker-compose.yml up -d
 ```
 
-## Git Hooks (Optional)
+## Manual Checks Before Commit/Push
 
-This repo uses Lefthook for git hooks.
-
-Install:
-
-```bash
-lefthook install
-```
-
-Hooks:
-
-- Pre-commit: `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`
-- Pre-push: `cargo build --workspace`, `cargo test --workspace`
+- Before commit: `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`
+- Before push: `cargo build --workspace`, `cargo test --workspace`
 
 ## Style and Guidelines
 

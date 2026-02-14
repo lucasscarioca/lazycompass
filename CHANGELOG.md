@@ -16,6 +16,7 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 - Config: load optional `.env` files for interpolation without overriding real env vars.
 - Tests: print explicit skip reason when the playground integration test is not enabled.
 - Docs: remove stale `SECURITY.md` reference from README.
+- Dev workflow: remove Lefthook config; run checks manually before commit/push.
 
 ## [0.5.0] - 2026-02-05
 

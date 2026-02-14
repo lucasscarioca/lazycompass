@@ -82,24 +82,14 @@ Run doc tests (if added later):
 cargo test --doc
 ```
 
-## Git Hooks (Optional)
+## Manual Checks Before Commit/Push
 
-This repo includes a `lefthook.yml` config for pre-commit and pre-push hooks.
-
-Install and enable:
-
-```
-lefthook install
-```
-
-The hooks run:
-
-Pre-commit:
+Run before commit:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace -- -D warnings`
 
-Pre-push:
+Run before push:
 
 - `cargo build --workspace`
 - `cargo test --workspace`
