@@ -21,6 +21,9 @@ fn playground_uri() -> String {
 #[tokio::test]
 async fn playground_query_and_aggregation() -> Result<()> {
     if !playground_enabled() {
+        eprintln!(
+            "skipping playground_query_and_aggregation: set {PLAYGROUND_ENV}=1 (optional {PLAYGROUND_URI_ENV}=mongodb://localhost:27017)"
+        );
         return Ok(());
     }
 

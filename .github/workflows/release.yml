@@ -38,10 +38,45 @@ jobs:
       - name: Build
         run: cargo build --release -p lazycompass --target ${{ matrix.target }}
 
-      - name: Package
-        run: tar -czf ${{ matrix.archive }} -C target/${{ matrix.target }}/release lazycompass
+      - name: Package and checksum
+        run: |
+          tar -czf ${{ matrix.archive }} -C target/${{ matrix.target }}/release lazycompass
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
+          else
+            shasum -a 256 ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
+          fi
+
+      - name: Import GPG key (optional)
+        id: import_gpg
+        if: ${{ secrets.RELEASE_GPG_PRIVATE_KEY != '' && secrets.RELEASE_GPG_PASSPHRASE != '' }}
+        env:
+          RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+        run: |
+          printf '%s' "$RELEASE_GPG_PRIVATE_KEY" | gpg --batch --import
+          key_fpr=$(gpg --list-secret-keys --with-colons | awk -F: '$1=="fpr"{print $10; exit}')
+          echo "fingerprint=$key_fpr" >> "$GITHUB_OUTPUT"
+
+      - name: Sign checksum (optional)
+        if: ${{ steps.import_gpg.outputs.fingerprint != '' }}
+        env:
+          RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+        run: |
+          gpg --batch --yes --pinentry-mode loopback \
+            --passphrase "$RELEASE_GPG_PASSPHRASE" \
+            --local-user "${{ steps.import_gpg.outputs.fingerprint }}" \
+            --output ${{ matrix.archive }}.sha256.sig \
+            --detach-sign ${{ matrix.archive }}.sha256
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.archive }}
+          files: |
+            ${{ matrix.archive }}
+            ${{ matrix.archive }}.sha256
+
+      - name: Upload signature (optional)
+        if: ${{ steps.import_gpg.outputs.fingerprint != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.archive }}.sha256.sig

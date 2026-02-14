@@ -102,7 +102,6 @@ See `CONFIGURATION.md` and `QUERY_FORMAT.md` for config and saved query formats.
 
 - `CONFIGURATION.md`
 - `QUERY_FORMAT.md`
-- `SECURITY.md`
 - `VERSIONING.md`
 - `RELEASE.md`
 - `CHANGELOG.md`
