@@ -290,14 +290,8 @@ fn build_query_request(args: QueryArgs) -> Result<QueryRequest> {
         OutputFormat::JsonPretty
     };
 
-    if let Some(name) = &args.name {
+    if let Some(id) = &args.name {
         let mut conflicts = Vec::new();
-        if args.db.is_some() {
-            conflicts.push("--db");
-        }
-        if args.collection.is_some() {
-            conflicts.push("--collection");
-        }
         if args.filter.is_some() {
             conflicts.push("--filter");
         }
@@ -313,14 +307,18 @@ fn build_query_request(args: QueryArgs) -> Result<QueryRequest> {
         if !conflicts.is_empty() {
             anyhow::bail!(
                 "saved query '{}' cannot be combined with {}",
-                name,
+                id,
                 conflicts.join(", ")
             );
         }
     }
 
-    let target = if let Some(name) = args.name {
-        QueryTarget::Saved { name }
+    let target = if let Some(id) = args.name {
+        QueryTarget::Saved {
+            id,
+            database: args.db,
+            collection: args.collection,
+        }
     } else {
         let database = args
             .db
@@ -353,28 +351,26 @@ fn build_agg_request(args: AggArgs) -> Result<AggregationRequest> {
         OutputFormat::JsonPretty
     };
 
-    if let Some(name) = &args.name {
+    if let Some(id) = &args.name {
         let mut conflicts = Vec::new();
-        if args.db.is_some() {
-            conflicts.push("--db");
-        }
-        if args.collection.is_some() {
-            conflicts.push("--collection");
-        }
         if args.pipeline.is_some() {
             conflicts.push("--pipeline");
         }
         if !conflicts.is_empty() {
             anyhow::bail!(
                 "saved aggregation '{}' cannot be combined with {}",
-                name,
+                id,
                 conflicts.join(", ")
             );
         }
     }
 
-    let target = if let Some(name) = args.name {
-        AggregationTarget::Saved { name }
+    let target = if let Some(id) = args.name {
+        AggregationTarget::Saved {
+            id,
+            database: args.db,
+            collection: args.collection,
+        }
     } else {
         let database = args
             .db
@@ -741,19 +737,32 @@ fn report_warnings(storage: &StorageSnapshot) {
 
 fn resolve_query_spec(request: &QueryRequest, storage: &StorageSnapshot) -> Result<QuerySpec> {
     match &request.target {
-        QueryTarget::Saved { name } => {
+        QueryTarget::Saved {
+            id,
+            database,
+            collection,
+        } => {
             let saved = storage
                 .queries
                 .iter()
-                .find(|query| query.name == *name)
-                .with_context(|| format!("saved query '{name}' not found"))?;
+                .find(|query| query.id == *id)
+                .with_context(|| format!("saved query '{id}' not found"))?;
+            let (resolved_db, resolved_collection) =
+                if let Some((database, collection)) = saved.scope.database_collection() {
+                    (database.to_string(), collection.to_string())
+                } else {
+                    let database = database.clone().ok_or_else(|| {
+                        anyhow::anyhow!("saved query '{id}' is shared; pass --db")
+                    })?;
+                    let collection = collection.clone().ok_or_else(|| {
+                        anyhow::anyhow!("saved query '{id}' is shared; pass --collection")
+                    })?;
+                    (database, collection)
+                };
             Ok(QuerySpec {
-                connection: request
-                    .connection
-                    .clone()
-                    .or_else(|| saved.connection.clone()),
-                database: saved.database.clone(),
-                collection: saved.collection.clone(),
+                connection: request.connection.clone(),
+                database: resolved_db,
+                collection: resolved_collection,
                 filter: saved.filter.clone(),
                 projection: saved.projection.clone(),
                 sort: saved.sort.clone(),
@@ -784,19 +793,32 @@ fn resolve_aggregation_spec(
     storage: &StorageSnapshot,
 ) -> Result<AggregationSpec> {
     match &request.target {
-        AggregationTarget::Saved { name } => {
+        AggregationTarget::Saved {
+            id,
+            database,
+            collection,
+        } => {
             let saved = storage
                 .aggregations
                 .iter()
-                .find(|aggregation| aggregation.name == *name)
-                .with_context(|| format!("saved aggregation '{name}' not found"))?;
+                .find(|aggregation| aggregation.id == *id)
+                .with_context(|| format!("saved aggregation '{id}' not found"))?;
+            let (resolved_db, resolved_collection) =
+                if let Some((database, collection)) = saved.scope.database_collection() {
+                    (database.to_string(), collection.to_string())
+                } else {
+                    let database = database.clone().ok_or_else(|| {
+                        anyhow::anyhow!("saved aggregation '{id}' is shared; pass --db")
+                    })?;
+                    let collection = collection.clone().ok_or_else(|| {
+                        anyhow::anyhow!("saved aggregation '{id}' is shared; pass --collection")
+                    })?;
+                    (database, collection)
+                };
             Ok(AggregationSpec {
-                connection: request
-                    .connection
-                    .clone()
-                    .or_else(|| saved.connection.clone()),
-                database: saved.database.clone(),
-                collection: saved.collection.clone(),
+                connection: request.connection.clone(),
+                database: resolved_db,
+                collection: resolved_collection,
                 pipeline: saved.pipeline.clone(),
             })
         }
@@ -1227,12 +1249,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_query_request_rejects_inline_with_name() {
+    fn build_query_request_allows_target_context_with_saved_name() {
         let args = QueryArgs {
             name: Some("saved".to_string()),
             connection: None,
             db: Some("lazycompass".to_string()),
-            collection: None,
+            collection: Some("users".to_string()),
             filter: None,
             projection: None,
             sort: None,
@@ -1240,17 +1262,26 @@ mod tests {
             table: false,
         };
 
-        assert!(build_query_request(args).is_err());
+        let request = build_query_request(args).expect("request");
+        assert!(matches!(
+            request.target,
+            QueryTarget::Saved {
+                id,
+                database,
+                collection
+            } if id == "saved" && database.as_deref() == Some("lazycompass")
+                && collection.as_deref() == Some("users")
+        ));
     }
 
     #[test]
-    fn build_agg_request_rejects_inline_with_name() {
+    fn build_agg_request_rejects_pipeline_with_saved_name() {
         let args = AggArgs {
             name: Some("saved".to_string()),
             connection: None,
             db: None,
             collection: Some("orders".to_string()),
-            pipeline: None,
+            pipeline: Some("[]".to_string()),
             table: false,
         };
 

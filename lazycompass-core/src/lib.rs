@@ -378,31 +378,60 @@ pub enum WriteGuardError {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedQuery {
-    pub name: String,
-    pub connection: Option<String>,
-    pub database: String,
-    pub collection: String,
+    pub id: String,
+    pub scope: SavedScope,
     pub filter: Option<String>,
     pub projection: Option<String>,
     pub sort: Option<String>,
     pub limit: Option<u64>,
-    pub notes: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedAggregation {
-    pub name: String,
-    pub connection: Option<String>,
-    pub database: String,
-    pub collection: String,
+    pub id: String,
+    pub scope: SavedScope,
     pub pipeline: String,
-    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SavedScope {
+    Shared,
+    Scoped {
+        database: String,
+        collection: String,
+    },
+}
+
+impl SavedScope {
+    pub fn validate(&self) -> Result<(), SpecValidationError> {
+        if let SavedScope::Scoped {
+            database,
+            collection,
+        } = self
+        {
+            validate_required("database", database)?;
+            validate_required("collection", collection)?;
+        }
+        Ok(())
+    }
+
+    pub fn database_collection(&self) -> Option<(&str, &str)> {
+        match self {
+            SavedScope::Shared => None,
+            SavedScope::Scoped {
+                database,
+                collection,
+            } => Some((database.as_str(), collection.as_str())),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub enum QueryTarget {
     Saved {
-        name: String,
+        id: String,
+        database: Option<String>,
+        collection: Option<String>,
     },
     Inline {
         database: String,
@@ -424,7 +453,9 @@ pub struct QueryRequest {
 #[derive(Debug, Clone)]
 pub enum AggregationTarget {
     Saved {
-        name: String,
+        id: String,
+        database: Option<String>,
+        collection: Option<String>,
     },
     Inline {
         database: String,
@@ -448,18 +479,16 @@ pub enum SpecValidationError {
 
 impl SavedQuery {
     pub fn validate(&self) -> Result<(), SpecValidationError> {
-        validate_required("name", &self.name)?;
-        validate_required("database", &self.database)?;
-        validate_required("collection", &self.collection)?;
+        validate_required("id", &self.id)?;
+        self.scope.validate()?;
         Ok(())
     }
 }
 
 impl SavedAggregation {
     pub fn validate(&self) -> Result<(), SpecValidationError> {
-        validate_required("name", &self.name)?;
-        validate_required("database", &self.database)?;
-        validate_required("collection", &self.collection)?;
+        validate_required("id", &self.id)?;
+        self.scope.validate()?;
         validate_required("pipeline", &self.pipeline)?;
         Ok(())
     }
@@ -479,37 +508,49 @@ mod tests {
     #[test]
     fn saved_query_validation_rejects_empty_fields() {
         let query = SavedQuery {
-            name: " ".to_string(),
-            connection: None,
-            database: "lazycompass".to_string(),
-            collection: "users".to_string(),
+            id: " ".to_string(),
+            scope: SavedScope::Scoped {
+                database: "lazycompass".to_string(),
+                collection: "users".to_string(),
+            },
             filter: None,
             projection: None,
             sort: None,
             limit: None,
-            notes: None,
         };
 
         assert!(matches!(
             query.validate(),
-            Err(SpecValidationError::EmptyField { field: "name" })
+            Err(SpecValidationError::EmptyField { field: "id" })
         ));
     }
 
     #[test]
     fn saved_aggregation_validation_rejects_empty_pipeline() {
         let aggregation = SavedAggregation {
-            name: "orders_by_user".to_string(),
-            connection: None,
-            database: "lazycompass".to_string(),
-            collection: "orders".to_string(),
+            id: "orders_by_user".to_string(),
+            scope: SavedScope::Scoped {
+                database: "lazycompass".to_string(),
+                collection: "orders".to_string(),
+            },
             pipeline: "  ".to_string(),
-            notes: None,
         };
 
         assert!(matches!(
             aggregation.validate(),
             Err(SpecValidationError::EmptyField { field: "pipeline" })
+        ));
+    }
+
+    #[test]
+    fn saved_scope_validation_rejects_empty_database_or_collection() {
+        let scope = SavedScope::Scoped {
+            database: " ".to_string(),
+            collection: "users".to_string(),
+        };
+        assert!(matches!(
+            scope.validate(),
+            Err(SpecValidationError::EmptyField { field: "database" })
         ));
     }
 

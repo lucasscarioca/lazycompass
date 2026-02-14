@@ -1,6 +1,6 @@
 # LazyCompass
 
-LazyCompass is a fast, vim-first MongoDB client for the terminal. It runs as a TUI by default, with CLI subcommands for running saved or inline queries/aggregations. Queries and aggregations can be persisted as git-committable TOML files so teams can share them per repo.
+LazyCompass is a fast, vim-first MongoDB client for the terminal. It runs as a TUI by default, with CLI subcommands for running saved or inline queries/aggregations. Queries and aggregations can be persisted as git-committable JSON files so teams can share them per repo.
 
 > Disclaimer: LazyCompass is an independent open-source project and is not affiliated with or endorsed by MongoDB, Inc.
 
@@ -93,15 +93,16 @@ Env var naming:
 - `.env` is auto-loaded from repo root for repo config and from `~/.config/lazycompass/.env` for global config.
 - Real environment variables take precedence over `.env` values.
 
-Write actions open your `$VISUAL` or `$EDITOR` for JSON/TOML editing (command + args only; no shell expansion).
+Write actions open your `$VISUAL` or `$EDITOR` for JSON editing (command + args only; no shell expansion).
 
-Documents screen keys: `i` insert, `e` edit, `d` delete, `Q` save query, `A` save aggregation, `r` run saved query, `g` run saved aggregation. Connections screen key: `n` add connection.
+Documents screen keys: `i` insert, `e` edit, `d` delete, `Q` save query, `A` save aggregation, `r` run saved query, `a` run saved aggregation. Connections screen key: `n` add connection.
 
 Run a saved query or aggregation:
 
 ```bash
-lazycompass query active_users
-lazycompass agg orders_by_user --table
+lazycompass query app.users.active_users
+lazycompass agg app.orders.orders_by_user --table
+lazycompass query recent_orders --db app --collection orders
 ```
 
 Run an inline query or aggregation:
