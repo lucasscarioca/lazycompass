@@ -2,77 +2,78 @@
 
 Saved queries and aggregations are read from the repo only:
 
-- `.lazycompass/queries/*.toml`
-- `.lazycompass/aggregations/*.toml`
+- `.lazycompass/queries/*.json`
+- `.lazycompass/aggregations/*.json`
 
-Filenames are derived from the `name` field (slugged). Invalid files are skipped with warnings.
+Only files with `.json` extension are loaded. Invalid files are skipped with warnings.
 
-Saved queries and aggregations can be run from the TUI or CLI.
+## Filename IDs and scope
 
-JSON fields are stored as strings for copy/paste parity with MongoDB syntax. MongoDB Extended JSON (relaxed or canonical) is supported.
+Saved spec ID is the filename stem (filename without `.json`), matched exactly by CLI/TUI.
 
-## SavedQuery
+Filename patterns:
 
-Required:
+- Shared: `<name>.json`
+- Scoped: `<database>.<collection>.<name>.json`
 
-- `name` (string)
-- `database` (string)
-- `collection` (string)
+Rules:
 
-Optional:
+- 1 segment: shared.
+- 3+ segments: scoped (`database = first`, `name = last`, `collection = middle segments joined by "."`).
+- 2 segments are invalid.
+- Empty segments (like `a..b`) are invalid.
 
-- `connection` (string)
-- `filter` (string, JSON)
-- `projection` (string, JSON)
-- `sort` (string, JSON)
-- `limit` (integer)
-- `notes` (string)
+Examples:
 
-Example:
+- `.lazycompass/queries/recent_orders.json` (shared)
+- `.lazycompass/queries/app.users.active_users.json` (scoped)
+- `.lazycompass/queries/app.foo.bar.orders.by_user.json` (scoped, collection is `foo.bar.orders`)
 
-```toml
-name = "active_users"
-connection = "primary"
-database = "app"
-collection = "users"
-filter = "{ \"active\": true }"
-projection = "{ \"email\": 1, \"name\": 1 }"
-sort = "{ \"createdAt\": -1 }"
-limit = 100
-notes = "Active users sorted by signup"
-```
+## SavedQuery JSON payload
 
-## SavedAggregation
+Payload is a JSON object, metadata-free.
 
-Required:
+Allowed keys:
 
-- `name` (string)
-- `database` (string)
-- `collection` (string)
-- `pipeline` (string, JSON array)
+- `filter` (JSON value)
+- `projection` (JSON value)
+- `sort` (JSON value)
+- `limit` (non-negative integer)
 
-Optional:
-
-- `connection` (string)
-- `notes` (string)
-
-Notes:
-
-- Pipelines containing `$out` or `$merge` are blocked by default. Set `allow_pipeline_writes = true` and disable `read_only` to run them.
+All keys are optional. `{}` is valid.
 
 Example:
 
-```toml
-name = "orders_by_user"
-connection = "primary"
-database = "app"
-collection = "orders"
-pipeline = "[ { \"$group\": { \"_id\": \"$userId\", \"total\": { \"$sum\": \"$total\" } } }, { \"$sort\": { \"total\": -1 } } ]"
-notes = "Total spend per user"
+```json
+{
+  "filter": { "active": true },
+  "projection": { "email": 1, "name": 1 },
+  "sort": { "createdAt": -1 },
+  "limit": 100
+}
 ```
 
-Extended JSON example:
+## SavedAggregation JSON payload
 
-```toml
-filter = "{ \"_id\": { \"$oid\": \"64e1f2b4c2a3e02c9a0a9c10\" } }"
+Payload is a JSON array (Mongo pipeline), metadata-free.
+
+Example:
+
+```json
+[
+  { "$group": { "_id": "$userId", "total": { "$sum": "$total" } } },
+  { "$sort": { "total": -1 } }
+]
 ```
+
+## Runtime target resolution
+
+- Scoped files: database/collection come from filename.
+- Shared files:
+  - CLI: require `--db` and `--collection` when running saved specs.
+  - TUI: use current selected database/collection.
+- Connection is runtime-selected (`--connection` in CLI or selected connection in TUI).
+
+## Pipeline write safety
+
+Pipelines containing `$out` or `$merge` are blocked by default. Set `allow_pipeline_writes = true` and disable `read_only` to run them.

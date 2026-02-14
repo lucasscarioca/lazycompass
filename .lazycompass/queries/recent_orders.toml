@@ -1,8 +1,0 @@
-name = "recent_orders"
-connection = "local"
-database = "lazycompass"
-collection = "orders"
-filter = "{ \"status\": \"paid\" }"
-sort = "{ \"createdAt\": -1 }"
-limit = 20
-notes = "Recent paid orders"
