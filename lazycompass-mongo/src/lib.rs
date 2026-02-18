@@ -384,7 +384,72 @@ fn find_pipeline_write_stage(pipeline: &[Document]) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lazycompass_core::ConnectionSpec;
     use mongodb::bson::oid::ObjectId;
+
+    fn config_with_connections(connections: Vec<ConnectionSpec>) -> Config {
+        Config {
+            connections,
+            ..Config::default()
+        }
+    }
+
+    fn connection(name: &str) -> ConnectionSpec {
+        ConnectionSpec {
+            name: name.to_string(),
+            uri: format!("mongodb://{name}:27017"),
+            default_database: None,
+        }
+    }
+
+    #[test]
+    fn resolve_connection_rejects_empty_config() {
+        let executor = MongoExecutor::new();
+        let err = executor
+            .resolve_connection(&Config::default(), None)
+            .expect_err("expected no connections error");
+        assert!(err.to_string().contains("no connections configured"));
+    }
+
+    #[test]
+    fn resolve_connection_uses_only_connection_when_name_missing() {
+        let executor = MongoExecutor::new();
+        let config = config_with_connections(vec![connection("local")]);
+        let resolved = executor
+            .resolve_connection(&config, None)
+            .expect("resolve connection");
+        assert_eq!(resolved.name, "local");
+    }
+
+    #[test]
+    fn resolve_connection_requires_name_when_multiple_connections_exist() {
+        let executor = MongoExecutor::new();
+        let config = config_with_connections(vec![connection("a"), connection("b")]);
+        let err = executor
+            .resolve_connection(&config, None)
+            .expect_err("expected missing connection name error");
+        assert!(err.to_string().contains("multiple connections configured"));
+    }
+
+    #[test]
+    fn resolve_connection_trims_name_input() {
+        let executor = MongoExecutor::new();
+        let config = config_with_connections(vec![connection("primary")]);
+        let resolved = executor
+            .resolve_connection(&config, Some("  primary  "))
+            .expect("resolve trimmed connection");
+        assert_eq!(resolved.name, "primary");
+    }
+
+    #[test]
+    fn resolve_connection_errors_when_named_connection_missing() {
+        let executor = MongoExecutor::new();
+        let config = config_with_connections(vec![connection("primary")]);
+        let err = executor
+            .resolve_connection(&config, Some("secondary"))
+            .expect_err("expected unknown connection");
+        assert!(err.to_string().contains("connection 'secondary' not found"));
+    }
 
     #[test]
     fn parse_json_document_supports_extjson_oid() {
@@ -414,6 +479,39 @@ mod tests {
     }
 
     #[test]
+    fn parse_json_document_rejects_invalid_json() {
+        let err = parse_json_document("filter", "{invalid").expect_err("expected parse error");
+        assert!(err.to_string().contains("invalid JSON in filter"));
+    }
+
+    #[test]
+    fn parse_json_document_requires_object() {
+        let err = parse_json_document("filter", "[]").expect_err("expected object error");
+        assert!(err.to_string().contains("filter must be a JSON object"));
+    }
+
+    #[test]
+    fn parse_json_pipeline_rejects_invalid_json() {
+        let err = parse_json_pipeline("{invalid").expect_err("expected parse error");
+        assert!(err.to_string().contains("invalid JSON in pipeline"));
+    }
+
+    #[test]
+    fn parse_json_pipeline_requires_array() {
+        let err = parse_json_pipeline("{}").expect_err("expected array error");
+        assert!(err.to_string().contains("pipeline must be a JSON array"));
+    }
+
+    #[test]
+    fn parse_json_pipeline_requires_object_items() {
+        let err = parse_json_pipeline(r#"[{"$match":{}}, 1]"#).expect_err("expected item error");
+        assert!(
+            err.to_string()
+                .contains("pipeline items must be JSON objects")
+        );
+    }
+
+    #[test]
     fn find_pipeline_write_stage_detects_out_and_merge() {
         let pipeline = vec![
             bson::doc! { "$match": { "active": true } },
@@ -426,5 +524,14 @@ mod tests {
 
         let pipeline = vec![bson::doc! { "$group": { "_id": "$userId" } }];
         assert_eq!(find_pipeline_write_stage(&pipeline), None);
+    }
+
+    #[test]
+    fn find_pipeline_write_stage_returns_first_matching_stage() {
+        let pipeline = vec![
+            bson::doc! { "$out": "archive" },
+            bson::doc! { "$merge": { "into": "archive2" } },
+        ];
+        assert_eq!(find_pipeline_write_stage(&pipeline), Some("$out"));
     }
 }

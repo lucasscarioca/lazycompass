@@ -160,10 +160,34 @@ fn resolve_query_spec(request: &QueryRequest, storage: &StorageSnapshot) -> Resu
 
 #[cfg(test)]
 mod tests {
-    use lazycompass_core::QueryTarget;
+    use lazycompass_core::{Config, QueryTarget, SavedQuery, SavedScope};
+    use lazycompass_storage::StorageSnapshot;
 
-    use super::build_query_request;
+    use super::{build_query_request, resolve_query_spec};
     use crate::cli::QueryArgs;
+
+    fn base_args() -> QueryArgs {
+        QueryArgs {
+            name: None,
+            connection: None,
+            db: Some("lazycompass".to_string()),
+            collection: Some("users".to_string()),
+            filter: None,
+            projection: None,
+            sort: None,
+            limit: None,
+            table: false,
+        }
+    }
+
+    fn storage_with_queries(queries: Vec<SavedQuery>) -> StorageSnapshot {
+        StorageSnapshot {
+            config: Config::default(),
+            queries,
+            aggregations: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
 
     #[test]
     fn build_query_request_allows_target_context_with_saved_name() {
@@ -189,5 +213,112 @@ mod tests {
             } if id == "saved" && database.as_deref() == Some("lazycompass")
                 && collection.as_deref() == Some("users")
         ));
+    }
+
+    #[test]
+    fn build_query_request_rejects_inline_conflicts_with_saved_name() {
+        let args = QueryArgs {
+            name: Some("saved".to_string()),
+            filter: Some(r#"{"active":true}"#.to_string()),
+            projection: Some(r#"{"email":1}"#.to_string()),
+            sort: Some(r#"{"createdAt":-1}"#.to_string()),
+            limit: Some(10),
+            ..base_args()
+        };
+        let err = build_query_request(args).expect_err("expected conflict");
+        assert!(err.to_string().contains("cannot be combined"));
+    }
+
+    #[test]
+    fn build_query_request_requires_db_for_inline_queries() {
+        let args = QueryArgs {
+            db: None,
+            collection: Some("users".to_string()),
+            ..base_args()
+        };
+        let err = build_query_request(args).expect_err("expected missing db");
+        assert!(
+            err.to_string()
+                .contains("--db is required for inline queries")
+        );
+    }
+
+    #[test]
+    fn build_query_request_requires_collection_for_inline_queries() {
+        let args = QueryArgs {
+            db: Some("lazycompass".to_string()),
+            collection: None,
+            ..base_args()
+        };
+        let err = build_query_request(args).expect_err("expected missing collection");
+        assert!(
+            err.to_string()
+                .contains("--collection is required for inline queries")
+        );
+    }
+
+    #[test]
+    fn resolve_query_spec_uses_saved_scope_when_scoped() {
+        let request = build_query_request(QueryArgs {
+            name: Some("saved.scoped".to_string()),
+            db: Some("override_db".to_string()),
+            collection: Some("override_collection".to_string()),
+            ..base_args()
+        })
+        .expect("request");
+        let storage = storage_with_queries(vec![SavedQuery {
+            id: "saved.scoped".to_string(),
+            scope: SavedScope::Scoped {
+                database: "scoped_db".to_string(),
+                collection: "scoped_collection".to_string(),
+            },
+            filter: Some(r#"{"active":true}"#.to_string()),
+            projection: None,
+            sort: None,
+            limit: Some(5),
+        }]);
+
+        let spec = resolve_query_spec(&request, &storage).expect("resolve saved scoped");
+        assert_eq!(spec.database, "scoped_db");
+        assert_eq!(spec.collection, "scoped_collection");
+        assert_eq!(spec.limit, Some(5));
+    }
+
+    #[test]
+    fn resolve_query_spec_requires_overrides_for_shared_saved_query() {
+        let request = build_query_request(QueryArgs {
+            name: Some("saved.shared".to_string()),
+            db: None,
+            collection: Some("users".to_string()),
+            ..base_args()
+        })
+        .expect("request");
+        let storage = storage_with_queries(vec![SavedQuery {
+            id: "saved.shared".to_string(),
+            scope: SavedScope::Shared,
+            filter: Some(r#"{"active":true}"#.to_string()),
+            projection: None,
+            sort: None,
+            limit: None,
+        }]);
+
+        let err = resolve_query_spec(&request, &storage).expect_err("expected missing --db");
+        assert!(
+            err.to_string()
+                .contains("saved query 'saved.shared' is shared")
+        );
+    }
+
+    #[test]
+    fn resolve_query_spec_rejects_unknown_saved_query() {
+        let request = build_query_request(QueryArgs {
+            name: Some("missing".to_string()),
+            ..base_args()
+        })
+        .expect("request");
+        let storage = storage_with_queries(Vec::new());
+
+        let err = resolve_query_spec(&request, &storage).expect_err("expected missing saved query");
+        assert!(err.to_string().contains("saved query 'missing' not found"));
     }
 }

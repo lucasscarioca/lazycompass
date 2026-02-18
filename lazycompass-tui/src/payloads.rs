@@ -126,3 +126,71 @@ pub(crate) fn default_saved_id(kind: &str, scope: &SavedScope) -> String {
         } => format!("{database}.{collection}.{name}"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        parse_aggregation_payload_input, parse_query_payload_input, render_query_payload_template,
+    };
+    use lazycompass_core::{SavedAggregation, SavedQuery, SavedScope};
+
+    fn query_template() -> SavedQuery {
+        SavedQuery {
+            id: "shared_query".to_string(),
+            scope: SavedScope::Shared,
+            filter: None,
+            projection: None,
+            sort: None,
+            limit: None,
+        }
+    }
+
+    #[test]
+    fn parse_query_payload_rejects_unknown_fields() {
+        let err = parse_query_payload_input(r#"{ "unknown": 1 }"#, &query_template())
+            .expect_err("expected unknown field error");
+        assert!(err.to_string().contains("unknown field 'unknown'"));
+    }
+
+    #[test]
+    fn parse_query_payload_validates_limit_type() {
+        let err = parse_query_payload_input(r#"{ "limit": "ten" }"#, &query_template())
+            .expect_err("expected invalid limit");
+        assert!(
+            err.to_string()
+                .contains("field 'limit' must be a non-negative integer")
+        );
+    }
+
+    #[test]
+    fn parse_aggregation_payload_requires_array() {
+        let template = SavedAggregation {
+            id: "agg".to_string(),
+            scope: SavedScope::Shared,
+            pipeline: "[]".to_string(),
+        };
+        let err = parse_aggregation_payload_input(r#"{ "x": 1 }"#, &template)
+            .expect_err("expected array payload");
+        assert!(
+            err.to_string()
+                .contains("saved aggregation payload must be a JSON array")
+        );
+    }
+
+    #[test]
+    fn render_query_payload_template_keeps_json_shapes() {
+        let template = SavedQuery {
+            id: "shape".to_string(),
+            scope: SavedScope::Shared,
+            filter: Some(r#"{"active":true}"#.to_string()),
+            projection: Some(r#"{"email":1}"#.to_string()),
+            sort: Some(r#"{"createdAt":-1}"#.to_string()),
+            limit: Some(10),
+        };
+        let rendered = render_query_payload_template(&template).expect("render");
+        assert!(rendered.contains("\"filter\""));
+        assert!(rendered.contains("\"projection\""));
+        assert!(rendered.contains("\"sort\""));
+        assert!(rendered.contains("\"limit\""));
+    }
+}

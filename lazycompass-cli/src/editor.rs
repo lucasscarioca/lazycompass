@@ -61,3 +61,65 @@ pub(crate) fn parse_json_value(label: &str, value: &str) -> Result<Bson> {
         serde_json::from_str(value).with_context(|| format!("invalid JSON in {label}"))?;
     Bson::try_from(json).with_context(|| format!("invalid JSON in {label}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_json_value, read_document_input};
+    use lazycompass_mongo::Bson;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_file_path(prefix: &str) -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!("lazycompass_cli_editor_{prefix}_{nonce}.json"))
+    }
+
+    #[test]
+    fn read_document_input_rejects_document_and_file_together() {
+        let err = read_document_input(
+            "insert",
+            Some(r#"{"a":1}"#.to_string()),
+            Some("doc.json".to_string()),
+        )
+        .expect_err("expected conflict");
+        assert!(
+            err.to_string()
+                .contains("--document and --file cannot be used together")
+        );
+    }
+
+    #[test]
+    fn read_document_input_reads_document_file() {
+        let path = temp_file_path("read_ok");
+        fs::write(&path, r#"{"name":"nora"}"#).expect("write test file");
+
+        let result = read_document_input("insert", None, Some(path.to_string_lossy().to_string()))
+            .expect("read file");
+        assert_eq!(result, r#"{"name":"nora"}"#);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn read_document_input_fails_for_missing_file() {
+        let path = temp_file_path("missing");
+        let err = read_document_input("insert", None, Some(path.to_string_lossy().to_string()))
+            .expect_err("expected read failure");
+        assert!(err.to_string().contains("unable to read document file"));
+    }
+
+    #[test]
+    fn parse_json_value_parses_valid_json() {
+        let value = parse_json_value("id", r#""abc""#).expect("parse json");
+        assert_eq!(value, Bson::String("abc".to_string()));
+    }
+
+    #[test]
+    fn parse_json_value_rejects_invalid_json() {
+        let err = parse_json_value("id", "{invalid").expect_err("expected parse failure");
+        assert!(err.to_string().contains("invalid JSON in id"));
+    }
+}

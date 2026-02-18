@@ -148,3 +148,70 @@ fn parse_log_level(level: Option<&str>) -> (LevelFilter, Option<String>) {
     };
     (parsed, None)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_log_level, rotate_log_files, rotated_log_path};
+    use std::fs;
+    use std::path::PathBuf;
+    use tracing_subscriber::filter::LevelFilter;
+
+    fn temp_dir(prefix: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("lazycompass_logging_{prefix}_{nonce}"));
+        fs::create_dir_all(&path).expect("create temp dir");
+        path
+    }
+
+    #[test]
+    fn parse_log_level_accepts_supported_levels() {
+        assert_eq!(parse_log_level(Some("trace")).0, LevelFilter::TRACE);
+        assert_eq!(parse_log_level(Some("DEBUG")).0, LevelFilter::DEBUG);
+        assert_eq!(parse_log_level(Some("info")).0, LevelFilter::INFO);
+        assert_eq!(parse_log_level(Some("warning")).0, LevelFilter::WARN);
+        assert_eq!(parse_log_level(Some("error")).0, LevelFilter::ERROR);
+    }
+
+    #[test]
+    fn parse_log_level_falls_back_to_info_for_invalid_values() {
+        let (level, warning) = parse_log_level(Some("verbose"));
+        assert_eq!(level, LevelFilter::INFO);
+        let warning = warning.expect("warning");
+        assert!(warning.contains("invalid log level"));
+    }
+
+    #[test]
+    fn rotated_log_path_appends_numeric_suffix() {
+        let path = std::path::Path::new("/tmp/lazycompass.log");
+        assert_eq!(
+            rotated_log_path(path, 3),
+            std::path::Path::new("/tmp/lazycompass.log.3")
+        );
+    }
+
+    #[test]
+    fn rotate_log_files_rotates_and_limits_backups() {
+        let dir = temp_dir("rotate");
+        let log = dir.join("lazycompass.log");
+        fs::write(&log, "current").expect("write current");
+        fs::write(log.with_file_name("lazycompass.log.1"), "backup1").expect("write .1");
+        fs::write(log.with_file_name("lazycompass.log.2"), "backup2").expect("write .2");
+
+        rotate_log_files(&log, 2).expect("rotate logs");
+
+        assert!(!log.exists());
+        assert_eq!(
+            fs::read_to_string(log.with_file_name("lazycompass.log.1")).expect("read .1"),
+            "current"
+        );
+        assert_eq!(
+            fs::read_to_string(log.with_file_name("lazycompass.log.2")).expect("read .2"),
+            "backup1"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
