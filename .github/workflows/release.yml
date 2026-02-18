@@ -49,10 +49,14 @@ jobs:
 
       - name: Import GPG key (optional)
         id: import_gpg
-        if: ${{ secrets.RELEASE_GPG_PRIVATE_KEY != '' && secrets.RELEASE_GPG_PASSPHRASE != '' }}
         env:
           RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
         run: |
+          if [ -z "$RELEASE_GPG_PRIVATE_KEY" ] || [ -z "$RELEASE_GPG_PASSPHRASE" ]; then
+            echo "fingerprint=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           printf '%s' "$RELEASE_GPG_PRIVATE_KEY" | gpg --batch --import
           key_fpr=$(gpg --list-secret-keys --with-colons | awk -F: '$1=="fpr"{print $10; exit}')
           echo "fingerprint=$key_fpr" >> "$GITHUB_OUTPUT"
