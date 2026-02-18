@@ -6,6 +6,10 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-02-18
+
+- CI: fix release workflow parsing by removing secret-based job-level conditional logic and handling optional signing with runtime guards.
+
 ## [0.6.0] - 2026-02-18
 
 - Breaking: saved queries/aggregations now use JSON files (`.lazycompass/queries/*.json`, `.lazycompass/aggregations/*.json`) with dotted filename IDs (`<name>` shared, `<db>.<collection>.<name>` scoped); TOML saved specs removed.
