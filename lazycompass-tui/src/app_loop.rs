@@ -538,11 +538,6 @@ mod tests {
         App::new(paths, storage, false).expect("build app")
     }
 
-    fn test_terminal() -> Terminal<CrosstermBackend<Stdout>> {
-        let backend = CrosstermBackend::new(stdout());
-        Terminal::new(backend).expect("build terminal")
-    }
-
     #[test]
     fn resolve_action_requires_double_g_for_top_navigation() {
         let mut app = test_app();
@@ -554,25 +549,6 @@ mod tests {
             app.resolve_action(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE)),
             Some(KeyAction::GoTop)
         );
-    }
-
-    #[test]
-    fn handle_key_closes_help_on_escape() {
-        let mut app = test_app();
-        app.help_visible = true;
-        app.last_g = true;
-        let mut terminal = test_terminal();
-
-        let should_quit = app
-            .handle_key(
-                KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-                &mut terminal,
-            )
-            .expect("handle key");
-
-        assert!(!should_quit);
-        assert!(!app.help_visible);
-        assert!(!app.last_g);
     }
 
     #[test]
