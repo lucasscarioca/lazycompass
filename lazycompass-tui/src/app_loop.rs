@@ -503,3 +503,92 @@ impl App {
         self.message = Some(message);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use lazycompass_core::Config;
+    use lazycompass_storage::StorageSnapshot;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_dir(prefix: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("lazycompass_tui_loop_{prefix}_{nonce}"));
+        fs::create_dir_all(&path).expect("create temp dir");
+        path
+    }
+
+    fn test_app() -> App {
+        let root = temp_dir("app");
+        let paths = ConfigPaths {
+            global_root: root.join("global"),
+            repo_root: None,
+        };
+        let storage = StorageSnapshot {
+            config: Config::default(),
+            queries: Vec::new(),
+            aggregations: Vec::new(),
+            warnings: Vec::new(),
+        };
+        App::new(paths, storage, false).expect("build app")
+    }
+
+    fn test_terminal() -> Terminal<CrosstermBackend<Stdout>> {
+        let backend = CrosstermBackend::new(stdout());
+        Terminal::new(backend).expect("build terminal")
+    }
+
+    #[test]
+    fn resolve_action_requires_double_g_for_top_navigation() {
+        let mut app = test_app();
+        assert_eq!(
+            app.resolve_action(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE)),
+            None
+        );
+        assert_eq!(
+            app.resolve_action(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE)),
+            Some(KeyAction::GoTop)
+        );
+    }
+
+    #[test]
+    fn handle_key_closes_help_on_escape() {
+        let mut app = test_app();
+        app.help_visible = true;
+        app.last_g = true;
+        let mut terminal = test_terminal();
+
+        let should_quit = app
+            .handle_key(
+                KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+                &mut terminal,
+            )
+            .expect("handle key");
+
+        assert!(!should_quit);
+        assert!(!app.help_visible);
+        assert!(!app.last_g);
+    }
+
+    #[test]
+    fn apply_load_result_ignores_stale_database_payloads() {
+        let mut app = test_app();
+        app.database_load_id = Some(2);
+        app.database_state = LoadState::Loading;
+        app.database_items = vec!["kept".to_string()];
+
+        app.apply_load_result(LoadResult::Databases {
+            id: 1,
+            result: Ok(vec!["new".to_string()]),
+        });
+
+        assert_eq!(app.database_load_id, Some(2));
+        assert_eq!(app.database_items, vec!["kept".to_string()]);
+        assert!(matches!(app.database_state, LoadState::Loading));
+    }
+}

@@ -70,3 +70,60 @@ fn find_repo_root(start: &Path) -> Option<PathBuf> {
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::find_repo_root;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_dir(prefix: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("lazycompass_paths_{prefix}_{nonce}"));
+        fs::create_dir_all(&path).expect("create temp dir");
+        path
+    }
+
+    #[test]
+    fn find_repo_root_prefers_nearest_lazycompass_dir() {
+        let root = temp_dir("lazycompass_nearest");
+        let repo = root.join("repo");
+        let nested = repo.join("a/b/c");
+        fs::create_dir_all(repo.join(".lazycompass")).expect("create .lazycompass");
+        fs::create_dir_all(&nested).expect("create nested");
+
+        let found = find_repo_root(&nested).expect("find repo root");
+        assert_eq!(found, repo);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn find_repo_root_falls_back_to_git_dir() {
+        let root = temp_dir("git_fallback");
+        let repo = root.join("repo");
+        let nested = repo.join("src/deep");
+        fs::create_dir_all(repo.join(".git")).expect("create .git");
+        fs::create_dir_all(&nested).expect("create nested");
+
+        let found = find_repo_root(&nested).expect("find repo root");
+        assert_eq!(found, repo);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn find_repo_root_returns_none_when_missing_markers() {
+        let root = temp_dir("none");
+        let nested = root.join("x/y/z");
+        fs::create_dir_all(&nested).expect("create nested");
+
+        let found = find_repo_root(&nested);
+        assert!(found.is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+}

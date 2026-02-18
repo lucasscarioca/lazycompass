@@ -316,3 +316,84 @@ impl App {
         max.min(u16::MAX as usize) as u16
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lazycompass_core::Config;
+    use lazycompass_storage::StorageSnapshot;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_dir(prefix: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("lazycompass_tui_nav_{prefix}_{nonce}"));
+        fs::create_dir_all(&path).expect("create temp dir");
+        path
+    }
+
+    fn test_app() -> App {
+        let root = temp_dir("app");
+        let paths = ConfigPaths {
+            global_root: root.join("global"),
+            repo_root: None,
+        };
+        let storage = StorageSnapshot {
+            config: Config::default(),
+            queries: Vec::new(),
+            aggregations: Vec::new(),
+            warnings: Vec::new(),
+        };
+        App::new(paths, storage, false).expect("build app")
+    }
+
+    #[test]
+    fn move_selection_saturates_at_bounds() {
+        let mut selected = Some(1);
+        App::move_selection(&mut selected, 3, -5);
+        assert_eq!(selected, Some(0));
+
+        App::move_selection(&mut selected, 3, 10);
+        assert_eq!(selected, Some(2));
+    }
+
+    #[test]
+    fn select_index_and_last_handle_empty_and_non_empty_lists() {
+        let mut selected = Some(0);
+        App::select_index(&mut selected, 0, 0);
+        assert_eq!(selected, None);
+
+        App::select_index(&mut selected, 3, 5);
+        assert_eq!(selected, Some(2));
+
+        App::select_last(&mut selected, 0);
+        assert_eq!(selected, None);
+
+        App::select_last(&mut selected, 4);
+        assert_eq!(selected, Some(3));
+    }
+
+    #[test]
+    fn scroll_document_respects_min_and_max_bounds() {
+        let mut app = test_app();
+        app.document_lines = vec![
+            "line1".to_string(),
+            "line2".to_string(),
+            "line3".to_string(),
+            "line4".to_string(),
+        ];
+        app.document_scroll = 0;
+
+        app.scroll_document(2);
+        assert_eq!(app.document_scroll, 2);
+
+        app.scroll_document(99);
+        assert_eq!(app.document_scroll, app.max_document_scroll());
+
+        app.scroll_document(-2);
+        assert_eq!(app.document_scroll, 1);
+    }
+}
