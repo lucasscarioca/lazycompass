@@ -89,8 +89,10 @@ Run before commit:
 - `cargo fmt --check`
 - `cargo clippy --workspace -- -D warnings`
 
-Run before push:
+Run before push (always, including direct pushes to `main`):
 
+- `cargo fmt --check`
+- `cargo clippy --workspace -- -D warnings`
 - `cargo build --workspace`
 - `cargo test --workspace`
 
@@ -200,6 +202,8 @@ Follow Rust 2024 edition idioms and keep changes minimal and consistent.
 
 ## Git/Workspace Hygiene
 
+- Solo workflow: commit and push directly to `main` (no PR required)
+- CI validates pushes to `main`; local complete checks are mandatory before push
 - Do not delete or rewrite existing user changes without approval
 - Avoid destructive git commands
 - Keep `.lazycompass/` contents in sync with sample data

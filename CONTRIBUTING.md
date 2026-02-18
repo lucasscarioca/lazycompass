@@ -79,7 +79,12 @@ docker compose -f dev/mongodb/docker-compose.yml up -d
 ## Manual Checks Before Commit/Push
 
 - Before commit: `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`
-- Before push: `cargo build --workspace`, `cargo test --workspace`
+- Before push (always, including direct pushes to `main`): `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`, `cargo build --workspace`, `cargo test --workspace`
+
+## Git Workflow
+
+- Current mode: direct commits/pushes to `main` (no PR required)
+- Rule: always run full local checks before pushing
 
 ## Style and Guidelines
 
