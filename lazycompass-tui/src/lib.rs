@@ -50,7 +50,7 @@ use editor::{
     editor_temp_path, is_editor_cancelled, resolve_editor, run_editor_command,
     write_editor_temp_file,
 };
-use errors::{format_error_message, is_network_error, is_network_error_message};
+use errors::format_error;
 use formatting::{connection_label, document_id, document_preview, format_bson, format_document};
 use keymap::{KeyAction, action_for_key, hint_groups, keys_for_actions};
 use payloads::{
@@ -147,25 +147,25 @@ enum LoadState {
 enum LoadResult {
     Databases {
         id: u64,
-        result: Result<Vec<String>, String>,
+        result: Result<Vec<String>>,
     },
     Collections {
         id: u64,
-        result: Result<Vec<String>, String>,
+        result: Result<Vec<String>>,
     },
     Documents {
         id: u64,
-        result: Result<Vec<Document>, String>,
+        result: Result<Vec<Document>>,
     },
     SavedQuery {
         id: u64,
         name: String,
-        result: Result<Vec<Document>, String>,
+        result: Result<Vec<Document>>,
     },
     SavedAggregation {
         id: u64,
         name: String,
-        result: Result<Vec<Document>, String>,
+        result: Result<Vec<Document>>,
     },
 }
 

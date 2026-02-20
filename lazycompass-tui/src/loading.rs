@@ -23,8 +23,7 @@ impl App {
             let executor = MongoExecutor::new();
             let result = executor
                 .list_databases(&config, Some(&connection_name))
-                .await
-                .map_err(|error| error.to_string());
+                .await;
             let _ = sender.send(LoadResult::Databases {
                 id: request_id,
                 result,
@@ -78,10 +77,7 @@ impl App {
         let sender = self.load_tx.clone();
         self.runtime.spawn(async move {
             let executor = MongoExecutor::new();
-            let result = executor
-                .execute_query(&config, &spec)
-                .await
-                .map_err(|error| error.to_string());
+            let result = executor.execute_query(&config, &spec).await;
             let _ = sender.send(LoadResult::SavedQuery {
                 id: request_id,
                 name: saved_name,
@@ -137,10 +133,7 @@ impl App {
         let sender = self.load_tx.clone();
         self.runtime.spawn(async move {
             let executor = MongoExecutor::new();
-            let result = executor
-                .execute_aggregation(&config, &spec)
-                .await
-                .map_err(|error| error.to_string());
+            let result = executor.execute_aggregation(&config, &spec).await;
             let _ = sender.send(LoadResult::SavedAggregation {
                 id: request_id,
                 name: saved_name,
@@ -171,8 +164,7 @@ impl App {
             let executor = MongoExecutor::new();
             let result = executor
                 .list_collections(&config, Some(&connection_name), &database_name)
-                .await
-                .map_err(|error| error.to_string());
+                .await;
             let _ = sender.send(LoadResult::Collections {
                 id: request_id,
                 result,
@@ -217,10 +209,7 @@ impl App {
         let sender = self.load_tx.clone();
         self.runtime.spawn(async move {
             let executor = MongoExecutor::new();
-            let result = executor
-                .list_documents(&config, &spec)
-                .await
-                .map_err(|error| error.to_string());
+            let result = executor.list_documents(&config, &spec).await;
             let _ = sender.send(LoadResult::Documents {
                 id: request_id,
                 result,

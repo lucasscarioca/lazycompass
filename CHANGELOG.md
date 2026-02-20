@@ -9,6 +9,7 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 - Installer: stop surfacing raw `curl` 404 output when optional checksum/signature assets are unavailable during `lazycompass upgrade`.
 - Storage: auto-normalize config/saved-spec permissions (`700` dirs, `600` files) on load to prevent recurring footer permission warnings.
 - CLI: `lazycompass init` now ensures repo saved-spec directories exist (`.lazycompass/queries`, `.lazycompass/aggregations`).
+- UX: improve query/aggregation failure messaging with explicit timeout guidance (`maxTimeMS`, `timeouts.query_ms`) and surfaced root causes in TUI/CLI.
 
 ## [0.6.1] - 2026-02-18
 

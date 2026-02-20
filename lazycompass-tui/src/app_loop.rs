@@ -120,8 +120,7 @@ impl App {
                         self.database_state = LoadState::Idle;
                     }
                     Err(error) => {
-                        let message =
-                            format_error_message(&error, is_network_error_message(&error));
+                        let message = format_error(&error);
                         self.database_state = LoadState::Failed(message.clone());
                         self.message = Some(message);
                     }
@@ -144,8 +143,7 @@ impl App {
                         self.collection_state = LoadState::Idle;
                     }
                     Err(error) => {
-                        let message =
-                            format_error_message(&error, is_network_error_message(&error));
+                        let message = format_error(&error);
                         self.collection_state = LoadState::Failed(message.clone());
                         self.message = Some(message);
                     }
@@ -190,8 +188,7 @@ impl App {
                         }
                     }
                     Err(error) => {
-                        let message =
-                            format_error_message(&error, is_network_error_message(&error));
+                        let message = format_error(&error);
                         self.document_state = LoadState::Failed(message.clone());
                         self.message = Some(message);
                     }
@@ -222,8 +219,7 @@ impl App {
                         ));
                     }
                     Err(error) => {
-                        let message =
-                            format_error_message(&error, is_network_error_message(&error));
+                        let message = format_error(&error);
                         self.saved_query_state = LoadState::Failed(message.clone());
                         self.message = Some(message);
                     }
@@ -255,8 +251,7 @@ impl App {
                         ));
                     }
                     Err(error) => {
-                        let message =
-                            format_error_message(&error, is_network_error_message(&error));
+                        let message = format_error(&error);
                         self.saved_agg_state = LoadState::Failed(message.clone());
                         self.message = Some(message);
                     }
@@ -499,7 +494,7 @@ impl App {
     }
 
     pub(crate) fn set_error_message(&mut self, error: &anyhow::Error) {
-        let message = format_error_message(&error.to_string(), is_network_error(error));
+        let message = format_error(error);
         self.message = Some(message);
     }
 }

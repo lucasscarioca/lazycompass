@@ -11,6 +11,9 @@ pub(crate) fn report_error(error: &Error) {
     for cause in error.chain().skip(1) {
         eprintln!("caused by: {}", redact_sensitive_text(&cause.to_string()));
     }
+    if query_timeout_message_matches(error) {
+        eprintln!("note: query hit maxTimeMS; increase [timeouts].query_ms or narrow filter/sort");
+    }
     if network_message_matches(error) {
         eprintln!("note: network errors can be transient; retry read-only operations");
     }
@@ -49,6 +52,16 @@ fn network_message_matches(error: &Error) -> bool {
     })
 }
 
+fn query_timeout_message_matches(error: &Error) -> bool {
+    error_chain_matches(error, |message| {
+        message.contains("maxtimemsexpired")
+            || message.contains("max time ms")
+            || message.contains("max execution time")
+            || message.contains("execution time limit")
+            || message.contains("exceeded time limit")
+    })
+}
+
 fn error_chain_has<T: std::error::Error + 'static>(error: &Error) -> bool {
     error
         .chain()
@@ -60,4 +73,16 @@ fn error_chain_matches(error: &Error, predicate: impl Fn(&str) -> bool) -> bool 
         let message = cause.to_string().to_ascii_lowercase();
         predicate(&message)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::query_timeout_message_matches;
+
+    #[test]
+    fn query_timeout_message_matches_maxtime_errors() {
+        let error = anyhow::anyhow!("MaxTimeMSExpired: operation exceeded time limit")
+            .context("failed to run find on app.users");
+        assert!(query_timeout_message_matches(&error));
+    }
 }
