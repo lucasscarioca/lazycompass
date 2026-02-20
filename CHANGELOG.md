@@ -6,6 +6,8 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+- Installer: stop surfacing raw `curl` 404 output when optional checksum/signature assets are unavailable during `lazycompass upgrade`.
+
 ## [0.6.1] - 2026-02-18
 
 - CI: fix release workflow parsing by removing secret-based job-level conditional logic and handling optional signing with runtime guards.

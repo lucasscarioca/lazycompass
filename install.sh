@@ -280,17 +280,17 @@ download_and_install() {
 
   local checksum_file="$tmp_dir/${asset}.sha256"
   local checksum_sig_file="$tmp_dir/${asset}.sha256.sig"
-  if curl -fsSL -o "$checksum_file" "$checksum_url"; then
+  if curl -fsL -o "$checksum_file" "$checksum_url"; then
     print_message info "${MUTED}Verifying checksum...${NC}"
     verify_checksum "$checksum_file" "$tmp_dir/$asset"
-    if curl -fsSL -o "$checksum_sig_file" "$checksum_sig_url"; then
+    if curl -fsL -o "$checksum_sig_file" "$checksum_sig_url"; then
       print_message info "${MUTED}Verifying checksum signature...${NC}"
       verify_signature "$checksum_file" "$checksum_sig_file"
     else
-      print_message warning "Checksum signature not found; skipping signature verification."
+      print_message warning "Checksum signature unavailable; skipping signature verification."
     fi
   else
-    print_message warning "Checksum not found; skipping verification."
+    print_message warning "Checksum unavailable; skipping verification."
   fi
 
   tar -xzf "$tmp_dir/$asset" -C "$tmp_dir"
