@@ -17,8 +17,12 @@ pub async fn append_connection_to_repo_config(
         .repo_config_root()
         .ok_or_else(|| anyhow::anyhow!("no repo config found"))?;
     let config_path = repo_root.join("config.toml");
+    let queries_dir = repo_root.join("queries");
+    let aggregations_dir = repo_root.join("aggregations");
 
     ensure_secure_dir(&repo_root)?;
+    ensure_secure_dir(&queries_dir)?;
+    ensure_secure_dir(&aggregations_dir)?;
 
     let mut config = if config_path.exists() {
         read_config_for_update(&config_path)?
@@ -198,6 +202,28 @@ mod tests {
         ))
         .expect_err("expected missing repo config");
         assert!(err.to_string().contains("no repo config found"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn append_connection_to_repo_config_creates_saved_spec_dirs() {
+        let root = temp_dir("repo_dirs");
+        let repo_root = root.join("repo");
+        fs::create_dir_all(&repo_root).expect("create repo root");
+        let paths = ConfigPaths {
+            global_root: root.join("global"),
+            repo_root: Some(repo_root.clone()),
+        };
+
+        block_on_ready(append_connection_to_repo_config(
+            &paths,
+            &sample_connection("repo"),
+        ))
+        .expect("append repo");
+
+        assert!(repo_root.join(".lazycompass/queries").is_dir());
+        assert!(repo_root.join(".lazycompass/aggregations").is_dir());
 
         let _ = fs::remove_dir_all(root);
     }

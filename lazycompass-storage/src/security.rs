@@ -12,6 +12,30 @@ use crate::{ConfigPaths, paths::APP_DIR, saved_common::collect_json_paths};
 const DIR_MODE: u32 = 0o700;
 const FILE_MODE: u32 = 0o600;
 
+#[cfg(unix)]
+pub(crate) fn normalize_permissions(paths: &ConfigPaths) {
+    let _ = normalize_dir_if_exists(&paths.global_root);
+    let _ = normalize_file_if_exists(&paths.global_config_path());
+
+    if let Some(repo_root) = paths.repo_config_root() {
+        let _ = normalize_dir_if_exists(&repo_root);
+
+        let config_path = repo_root.join("config.toml");
+        let _ = normalize_file_if_exists(&config_path);
+
+        let queries_dir = repo_root.join("queries");
+        let _ = normalize_dir_if_exists(&queries_dir);
+        let _ = normalize_json_files_in_dir(&queries_dir);
+
+        let aggregations_dir = repo_root.join("aggregations");
+        let _ = normalize_dir_if_exists(&aggregations_dir);
+        let _ = normalize_json_files_in_dir(&aggregations_dir);
+    }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn normalize_permissions(_paths: &ConfigPaths) {}
+
 pub(crate) fn ensure_secure_dir(path: &Path) -> Result<()> {
     fs::create_dir_all(path)
         .with_context(|| format!("unable to create directory {}", path.display()))?;
@@ -76,6 +100,31 @@ fn set_file_permissions(path: &Path) -> Result<()> {
 
 #[cfg(not(unix))]
 fn set_file_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn normalize_dir_if_exists(path: &Path) -> Result<()> {
+    if path.is_dir() {
+        set_dir_permissions(path)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn normalize_file_if_exists(path: &Path) -> Result<()> {
+    if path.is_file() {
+        set_file_permissions(path)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn normalize_json_files_in_dir(path: &Path) -> Result<()> {
+    let paths = collect_json_paths(path)?;
+    for json_path in paths {
+        normalize_file_if_exists(&json_path)?;
+    }
     Ok(())
 }
 
@@ -153,7 +202,7 @@ mod tests {
     use anyhow::Result;
     use std::fs;
 
-    use super::permission_warnings;
+    use super::{normalize_permissions, permission_warnings};
     use crate::{ConfigPaths, test_support::write_file};
 
     #[cfg(unix)]
@@ -199,6 +248,52 @@ mod tests {
                 .any(|warning| warning.contains(".lazycompass"))
         );
         assert!(warnings.iter().any(|warning| warning.contains("queries")));
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn normalize_permissions_clears_permission_warnings() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = crate::test_support::temp_root("perm_normalize");
+        let global_root = root.join("global");
+        fs::create_dir_all(&global_root)?;
+        fs::set_permissions(&global_root, fs::Permissions::from_mode(0o755))?;
+        let global_config = global_root.join("config.toml");
+        write_file(&global_config, "read_only = true\n");
+        fs::set_permissions(&global_config, fs::Permissions::from_mode(0o644))?;
+
+        let repo_root = root.join("repo");
+        let repo_config_root = repo_root.join(".lazycompass");
+        fs::create_dir_all(repo_config_root.join("queries"))?;
+        fs::create_dir_all(repo_config_root.join("aggregations"))?;
+        fs::set_permissions(&repo_config_root, fs::Permissions::from_mode(0o755))?;
+        fs::set_permissions(
+            &repo_config_root.join("queries"),
+            fs::Permissions::from_mode(0o755),
+        )?;
+        fs::set_permissions(
+            &repo_config_root.join("aggregations"),
+            fs::Permissions::from_mode(0o755),
+        )?;
+        let query_path = repo_config_root.join("queries/query.json");
+        write_file(&query_path, "{}\n");
+        fs::set_permissions(&query_path, fs::Permissions::from_mode(0o644))?;
+        let aggregation_path = repo_config_root.join("aggregations/agg.json");
+        write_file(&aggregation_path, "[]\n");
+        fs::set_permissions(&aggregation_path, fs::Permissions::from_mode(0o644))?;
+
+        let paths = ConfigPaths {
+            global_root,
+            repo_root: Some(repo_root),
+        };
+        normalize_permissions(&paths);
+        let warnings = permission_warnings(&paths);
+
+        assert!(warnings.is_empty());
 
         let _ = fs::remove_dir_all(&root);
         Ok(())
