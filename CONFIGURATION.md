@@ -74,6 +74,7 @@ Config editing:
 - `name` (string, required)
 - `uri` (string, required)
 - `default_database` (string, optional)
+  CLI fallback for `--db` in `query`, `agg`, `insert`, and `update`; also used for shared saved query/aggregation runs when `--db` is omitted.
 
 ### ThemeConfig
 

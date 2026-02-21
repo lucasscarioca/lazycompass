@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use lazycompass_mongo::{DocumentReplaceSpec, MongoExecutor, parse_json_document};
 use lazycompass_storage::{ConfigPaths, load_storage};
 
+use super::database::resolve_database_arg;
 use crate::cli::UpdateArgs;
 use crate::editor::{parse_json_value, read_document_input};
 use crate::errors::report_warnings;
@@ -28,9 +29,13 @@ pub(crate) fn run_update(
     tracing::info!(component = "cli", command = "update", "lazycompass started");
     report_warnings(&storage);
 
-    let database = args
-        .db
-        .ok_or_else(|| anyhow::anyhow!("--db is required for update"))?;
+    let connection = args.connection;
+    let database = resolve_database_arg(
+        &config,
+        connection.as_deref(),
+        args.db,
+        "--db is required for update",
+    )?;
     let collection = args
         .collection
         .ok_or_else(|| anyhow::anyhow!("--collection is required for update"))?;
@@ -48,7 +53,7 @@ pub(crate) fn run_update(
     }
 
     let spec = DocumentReplaceSpec {
-        connection: args.connection,
+        connection,
         database,
         collection,
         id: id.clone(),
@@ -56,11 +61,11 @@ pub(crate) fn run_update(
     };
 
     let executor = MongoExecutor::new();
-    let connection = executor.resolve_connection(&config, spec.connection.as_deref())?;
+    let resolved_connection = executor.resolve_connection(&config, spec.connection.as_deref())?;
     tracing::info!(
         component = "cli",
         command = "update",
-        connection = connection.name.as_str(),
+        connection = resolved_connection.name.as_str(),
         database = spec.database.as_str(),
         collection = spec.collection.as_str(),
         "replacing document"

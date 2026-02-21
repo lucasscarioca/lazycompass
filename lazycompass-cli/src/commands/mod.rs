@@ -1,5 +1,6 @@
 mod agg;
 mod config;
+mod database;
 mod init;
 mod insert;
 mod query;

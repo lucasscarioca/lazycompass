@@ -70,7 +70,7 @@ Example:
 
 - Scoped files: database/collection come from filename.
 - Shared files:
-  - CLI: require `--db` and `--collection` when running saved specs.
+  - CLI: require `--collection`; use `--db` when provided, otherwise fall back to selected connection `default_database`.
   - TUI: use current selected database/collection.
 - Connection is runtime-selected (`--connection` in CLI or selected connection in TUI).
 

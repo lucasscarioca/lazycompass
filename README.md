@@ -105,6 +105,13 @@ lazycompass agg app.orders.orders_by_user --table
 lazycompass query recent_orders --db app --collection orders
 ```
 
+If the selected connection has `default_database` configured, you can omit `--db`:
+
+```bash
+lazycompass query --collection users --filter '{"active": true}'
+lazycompass agg recent_orders --collection orders
+```
+
 Run an inline query or aggregation:
 
 ```bash
@@ -120,6 +127,8 @@ lazycompass config edit
 lazycompass config add-connection
 lazycompass insert --db lazycompass --collection users --document '{"email": "a@example.com"}'
 lazycompass update --db lazycompass --collection users --id '{"$oid":"64e1f2b4c2a3e02c9a0a9c10"}' --document '{"email": "a@example.com", "active": true}'
+lazycompass insert --collection users --document '{"email": "a@example.com"}' # uses connection default_database
+lazycompass update --collection users --id '{"$oid":"64e1f2b4c2a3e02c9a0a9c10"}' --document '{"email": "a@example.com", "active": true}' # uses connection default_database
 ```
 
 ## Configuration

@@ -3,6 +3,7 @@ use lazycompass_core::{OutputFormat, QueryRequest, QueryTarget};
 use lazycompass_mongo::{MongoExecutor, QuerySpec};
 use lazycompass_storage::{ConfigPaths, StorageSnapshot, load_storage};
 
+use super::database::resolve_database_arg;
 use crate::cli::QueryArgs;
 use crate::errors::report_warnings;
 use crate::logging::{apply_cli_overrides, init_logging};
@@ -16,7 +17,6 @@ pub(crate) fn run_query(
 ) -> Result<()> {
     let cwd = std::env::current_dir().context("unable to resolve current directory")?;
     let paths = ConfigPaths::resolve_from(&cwd)?;
-    let request = build_query_request(args)?;
     let storage = load_storage(&paths)?;
     let mut config = storage.config.clone();
     apply_cli_overrides(
@@ -28,6 +28,16 @@ pub(crate) fn run_query(
     init_logging(&paths, &config)?;
     tracing::info!(component = "cli", command = "query", "lazycompass started");
     report_warnings(&storage);
+    let mut args = args;
+    if args.name.is_none() {
+        args.db = Some(resolve_database_arg(
+            &config,
+            args.connection.as_deref(),
+            args.db,
+            "--db is required for inline queries",
+        )?);
+    }
+    let request = build_query_request(args)?;
     let spec = resolve_query_spec(&request, &storage)?;
     let executor = MongoExecutor::new();
     let connection = executor.resolve_connection(&config, spec.connection.as_deref())?;
@@ -121,9 +131,12 @@ fn resolve_query_spec(request: &QueryRequest, storage: &StorageSnapshot) -> Resu
                 if let Some((database, collection)) = saved.scope.database_collection() {
                     (database.to_string(), collection.to_string())
                 } else {
-                    let database = database.clone().ok_or_else(|| {
-                        anyhow::anyhow!("saved query '{id}' is shared; pass --db")
-                    })?;
+                    let database = resolve_database_arg(
+                        &storage.config,
+                        request.connection.as_deref(),
+                        database.clone(),
+                        format!("saved query '{id}' is shared; pass --db"),
+                    )?;
                     let collection = collection.clone().ok_or_else(|| {
                         anyhow::anyhow!("saved query '{id}' is shared; pass --collection")
                     })?;
@@ -160,7 +173,7 @@ fn resolve_query_spec(request: &QueryRequest, storage: &StorageSnapshot) -> Resu
 
 #[cfg(test)]
 mod tests {
-    use lazycompass_core::{Config, QueryTarget, SavedQuery, SavedScope};
+    use lazycompass_core::{Config, ConnectionSpec, QueryTarget, SavedQuery, SavedScope};
     use lazycompass_storage::StorageSnapshot;
 
     use super::{build_query_request, resolve_query_spec};
@@ -180,12 +193,23 @@ mod tests {
         }
     }
 
-    fn storage_with_queries(queries: Vec<SavedQuery>) -> StorageSnapshot {
+    fn storage_with_queries(config: Config, queries: Vec<SavedQuery>) -> StorageSnapshot {
         StorageSnapshot {
-            config: Config::default(),
+            config,
             queries,
             aggregations: Vec::new(),
             warnings: Vec::new(),
+        }
+    }
+
+    fn config_with_connection(name: &str, default_database: Option<&str>) -> Config {
+        Config {
+            connections: vec![ConnectionSpec {
+                name: name.to_string(),
+                uri: format!("mongodb://{name}:27017"),
+                default_database: default_database.map(ToString::to_string),
+            }],
+            ..Config::default()
         }
     }
 
@@ -266,17 +290,20 @@ mod tests {
             ..base_args()
         })
         .expect("request");
-        let storage = storage_with_queries(vec![SavedQuery {
-            id: "saved.scoped".to_string(),
-            scope: SavedScope::Scoped {
-                database: "scoped_db".to_string(),
-                collection: "scoped_collection".to_string(),
-            },
-            filter: Some(r#"{"active":true}"#.to_string()),
-            projection: None,
-            sort: None,
-            limit: Some(5),
-        }]);
+        let storage = storage_with_queries(
+            Config::default(),
+            vec![SavedQuery {
+                id: "saved.scoped".to_string(),
+                scope: SavedScope::Scoped {
+                    database: "scoped_db".to_string(),
+                    collection: "scoped_collection".to_string(),
+                },
+                filter: Some(r#"{"active":true}"#.to_string()),
+                projection: None,
+                sort: None,
+                limit: Some(5),
+            }],
+        );
 
         let spec = resolve_query_spec(&request, &storage).expect("resolve saved scoped");
         assert_eq!(spec.database, "scoped_db");
@@ -293,14 +320,17 @@ mod tests {
             ..base_args()
         })
         .expect("request");
-        let storage = storage_with_queries(vec![SavedQuery {
-            id: "saved.shared".to_string(),
-            scope: SavedScope::Shared,
-            filter: Some(r#"{"active":true}"#.to_string()),
-            projection: None,
-            sort: None,
-            limit: None,
-        }]);
+        let storage = storage_with_queries(
+            Config::default(),
+            vec![SavedQuery {
+                id: "saved.shared".to_string(),
+                scope: SavedScope::Shared,
+                filter: Some(r#"{"active":true}"#.to_string()),
+                projection: None,
+                sort: None,
+                limit: None,
+            }],
+        );
 
         let err = resolve_query_spec(&request, &storage).expect_err("expected missing --db");
         assert!(
@@ -310,13 +340,40 @@ mod tests {
     }
 
     #[test]
+    fn resolve_query_spec_uses_default_database_for_shared_saved_query() {
+        let request = build_query_request(QueryArgs {
+            name: Some("saved.shared".to_string()),
+            connection: Some("local".to_string()),
+            db: None,
+            collection: Some("users".to_string()),
+            ..base_args()
+        })
+        .expect("request");
+        let storage = storage_with_queries(
+            config_with_connection("local", Some("app")),
+            vec![SavedQuery {
+                id: "saved.shared".to_string(),
+                scope: SavedScope::Shared,
+                filter: Some(r#"{"active":true}"#.to_string()),
+                projection: None,
+                sort: None,
+                limit: None,
+            }],
+        );
+
+        let spec = resolve_query_spec(&request, &storage).expect("resolve saved shared");
+        assert_eq!(spec.database, "app");
+        assert_eq!(spec.collection, "users");
+    }
+
+    #[test]
     fn resolve_query_spec_rejects_unknown_saved_query() {
         let request = build_query_request(QueryArgs {
             name: Some("missing".to_string()),
             ..base_args()
         })
         .expect("request");
-        let storage = storage_with_queries(Vec::new());
+        let storage = storage_with_queries(Config::default(), Vec::new());
 
         let err = resolve_query_spec(&request, &storage).expect_err("expected missing saved query");
         assert!(err.to_string().contains("saved query 'missing' not found"));

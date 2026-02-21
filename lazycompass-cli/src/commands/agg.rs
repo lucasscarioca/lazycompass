@@ -3,6 +3,7 @@ use lazycompass_core::{AggregationRequest, AggregationTarget, OutputFormat};
 use lazycompass_mongo::{AggregationSpec, MongoExecutor};
 use lazycompass_storage::{ConfigPaths, StorageSnapshot, load_storage};
 
+use super::database::resolve_database_arg;
 use crate::cli::AggArgs;
 use crate::errors::report_warnings;
 use crate::logging::{apply_cli_overrides, init_logging};
@@ -16,7 +17,6 @@ pub(crate) fn run_agg(
 ) -> Result<()> {
     let cwd = std::env::current_dir().context("unable to resolve current directory")?;
     let paths = ConfigPaths::resolve_from(&cwd)?;
-    let request = build_agg_request(args)?;
     let storage = load_storage(&paths)?;
     let mut config = storage.config.clone();
     apply_cli_overrides(
@@ -28,6 +28,16 @@ pub(crate) fn run_agg(
     init_logging(&paths, &config)?;
     tracing::info!(component = "cli", command = "agg", "lazycompass started");
     report_warnings(&storage);
+    let mut args = args;
+    if args.name.is_none() {
+        args.db = Some(resolve_database_arg(
+            &config,
+            args.connection.as_deref(),
+            args.db,
+            "--db is required for inline aggregations",
+        )?);
+    }
+    let request = build_agg_request(args)?;
     let spec = resolve_aggregation_spec(&request, &storage)?;
     let executor = MongoExecutor::new();
     let connection = executor.resolve_connection(&config, spec.connection.as_deref())?;
@@ -115,9 +125,12 @@ fn resolve_aggregation_spec(
                 if let Some((database, collection)) = saved.scope.database_collection() {
                     (database.to_string(), collection.to_string())
                 } else {
-                    let database = database.clone().ok_or_else(|| {
-                        anyhow::anyhow!("saved aggregation '{id}' is shared; pass --db")
-                    })?;
+                    let database = resolve_database_arg(
+                        &storage.config,
+                        request.connection.as_deref(),
+                        database.clone(),
+                        format!("saved aggregation '{id}' is shared; pass --db"),
+                    )?;
                     let collection = collection.clone().ok_or_else(|| {
                         anyhow::anyhow!("saved aggregation '{id}' is shared; pass --collection")
                     })?;
@@ -145,7 +158,9 @@ fn resolve_aggregation_spec(
 
 #[cfg(test)]
 mod tests {
-    use lazycompass_core::{AggregationTarget, Config, SavedAggregation, SavedScope};
+    use lazycompass_core::{
+        AggregationTarget, Config, ConnectionSpec, SavedAggregation, SavedScope,
+    };
     use lazycompass_storage::StorageSnapshot;
 
     use super::{build_agg_request, resolve_aggregation_spec};
@@ -162,12 +177,26 @@ mod tests {
         }
     }
 
-    fn storage_with_aggregations(aggregations: Vec<SavedAggregation>) -> StorageSnapshot {
+    fn storage_with_aggregations(
+        config: Config,
+        aggregations: Vec<SavedAggregation>,
+    ) -> StorageSnapshot {
         StorageSnapshot {
-            config: Config::default(),
+            config,
             queries: Vec::new(),
             aggregations,
             warnings: Vec::new(),
+        }
+    }
+
+    fn config_with_connection(name: &str, default_database: Option<&str>) -> Config {
+        Config {
+            connections: vec![ConnectionSpec {
+                name: name.to_string(),
+                uri: format!("mongodb://{name}:27017"),
+                default_database: default_database.map(ToString::to_string),
+            }],
+            ..Config::default()
         }
     }
 
@@ -241,14 +270,17 @@ mod tests {
         })
         .expect("request");
         assert!(matches!(request.target, AggregationTarget::Saved { .. }));
-        let storage = storage_with_aggregations(vec![SavedAggregation {
-            id: "saved.scoped".to_string(),
-            scope: SavedScope::Scoped {
-                database: "scoped_db".to_string(),
-                collection: "scoped_collection".to_string(),
-            },
-            pipeline: r#"[{"$match":{"active":true}}]"#.to_string(),
-        }]);
+        let storage = storage_with_aggregations(
+            Config::default(),
+            vec![SavedAggregation {
+                id: "saved.scoped".to_string(),
+                scope: SavedScope::Scoped {
+                    database: "scoped_db".to_string(),
+                    collection: "scoped_collection".to_string(),
+                },
+                pipeline: r#"[{"$match":{"active":true}}]"#.to_string(),
+            }],
+        );
 
         let spec = resolve_aggregation_spec(&request, &storage).expect("resolve scoped saved");
         assert_eq!(spec.database, "scoped_db");
@@ -266,11 +298,14 @@ mod tests {
             ..base_args()
         })
         .expect("request");
-        let storage = storage_with_aggregations(vec![SavedAggregation {
-            id: "saved.shared".to_string(),
-            scope: SavedScope::Shared,
-            pipeline: r#"[{"$match":{"active":true}}]"#.to_string(),
-        }]);
+        let storage = storage_with_aggregations(
+            Config::default(),
+            vec![SavedAggregation {
+                id: "saved.shared".to_string(),
+                scope: SavedScope::Shared,
+                pipeline: r#"[{"$match":{"active":true}}]"#.to_string(),
+            }],
+        );
 
         let err = resolve_aggregation_spec(&request, &storage).expect_err("expected missing --db");
         assert!(
@@ -289,7 +324,7 @@ mod tests {
             ..base_args()
         })
         .expect("request");
-        let storage = storage_with_aggregations(Vec::new());
+        let storage = storage_with_aggregations(Config::default(), Vec::new());
 
         let err =
             resolve_aggregation_spec(&request, &storage).expect_err("expected missing saved agg");
@@ -297,5 +332,30 @@ mod tests {
             err.to_string()
                 .contains("saved aggregation 'missing' not found")
         );
+    }
+
+    #[test]
+    fn resolve_aggregation_spec_uses_default_database_for_shared_saved_aggregation() {
+        let request = build_agg_request(AggArgs {
+            name: Some("saved.shared".to_string()),
+            connection: Some("local".to_string()),
+            db: None,
+            collection: Some("orders".to_string()),
+            pipeline: None,
+            ..base_args()
+        })
+        .expect("request");
+        let storage = storage_with_aggregations(
+            config_with_connection("local", Some("app")),
+            vec![SavedAggregation {
+                id: "saved.shared".to_string(),
+                scope: SavedScope::Shared,
+                pipeline: r#"[{"$match":{"active":true}}]"#.to_string(),
+            }],
+        );
+
+        let spec = resolve_aggregation_spec(&request, &storage).expect("resolve saved shared");
+        assert_eq!(spec.database, "app");
+        assert_eq!(spec.collection, "orders");
     }
 }
