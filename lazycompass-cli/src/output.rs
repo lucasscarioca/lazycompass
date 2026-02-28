@@ -70,4 +70,21 @@ mod tests {
 
         let _ = fs::remove_file(path);
     }
+
+    #[test]
+    fn print_documents_writes_csv_to_file() {
+        let path = temp_path("csv");
+        let mut document = Document::new();
+        document.insert("name", "nora");
+        document.insert("age", 42);
+        let documents = vec![document];
+
+        print_documents(OutputFormat::Csv, &documents, Some(&path)).expect("write output");
+
+        let contents = fs::read_to_string(&path).expect("read output");
+        assert!(contents.starts_with("age,name\n"));
+        assert!(contents.contains("42,nora"));
+
+        let _ = fs::remove_file(path);
+    }
 }

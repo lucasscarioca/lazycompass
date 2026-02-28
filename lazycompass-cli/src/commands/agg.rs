@@ -56,7 +56,9 @@ pub(crate) fn run_agg(
 }
 
 fn build_agg_request(args: AggArgs) -> Result<AggregationRequest> {
-    let output = if args.table {
+    let output = if args.csv {
+        OutputFormat::Csv
+    } else if args.table {
         OutputFormat::Table
     } else {
         OutputFormat::JsonPretty
@@ -160,7 +162,7 @@ fn resolve_aggregation_spec(
 #[cfg(test)]
 mod tests {
     use lazycompass_core::{
-        AggregationTarget, Config, ConnectionSpec, SavedAggregation, SavedScope,
+        AggregationTarget, Config, ConnectionSpec, OutputFormat, SavedAggregation, SavedScope,
     };
     use lazycompass_storage::StorageSnapshot;
 
@@ -175,6 +177,7 @@ mod tests {
             collection: Some("orders".to_string()),
             pipeline: Some("[]".to_string()),
             table: false,
+            csv: false,
             output: None,
         }
     }
@@ -211,6 +214,7 @@ mod tests {
             collection: Some("orders".to_string()),
             pipeline: Some("[]".to_string()),
             table: false,
+            csv: false,
             output: None,
         };
 
@@ -260,6 +264,17 @@ mod tests {
             err.to_string()
                 .contains("--pipeline is required for inline aggregations")
         );
+    }
+
+    #[test]
+    fn build_agg_request_uses_csv_output_when_requested() {
+        let request = build_agg_request(AggArgs {
+            csv: true,
+            ..base_args()
+        })
+        .expect("request");
+
+        assert_eq!(request.output, OutputFormat::Csv);
     }
 
     #[test]

@@ -220,4 +220,17 @@ mod tests {
             _ => panic!("expected query command"),
         }
     }
+
+    #[test]
+    fn cli_parser_accepts_query_csv_flag() {
+        let cli = Cli::parse_from(["lazycompass", "query", "--collection", "users", "--csv"]);
+
+        match cli.command {
+            Some(Commands::Query(args)) => {
+                assert!(args.csv);
+                assert!(!args.table);
+            }
+            _ => panic!("expected query command"),
+        }
+    }
 }

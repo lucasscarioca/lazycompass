@@ -45,7 +45,11 @@ pub(crate) struct QueryArgs {
     #[arg(long)]
     pub(crate) limit: Option<u64>,
     #[arg(long)]
+    #[arg(conflicts_with = "csv")]
     pub(crate) table: bool,
+    #[arg(long)]
+    #[arg(conflicts_with = "table")]
+    pub(crate) csv: bool,
     #[arg(short = 'o', long)]
     pub(crate) output: Option<PathBuf>,
 }
@@ -63,7 +67,11 @@ pub(crate) struct AggArgs {
     #[arg(long)]
     pub(crate) pipeline: Option<String>,
     #[arg(long)]
+    #[arg(conflicts_with = "csv")]
     pub(crate) table: bool,
+    #[arg(long)]
+    #[arg(conflicts_with = "table")]
+    pub(crate) csv: bool,
     #[arg(short = 'o', long)]
     pub(crate) output: Option<PathBuf>,
 }

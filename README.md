@@ -106,6 +106,7 @@ lazycompass query app.users.active_users
 lazycompass agg app.orders.orders_by_user --table
 lazycompass query recent_orders --db app --collection orders
 lazycompass query recent_orders --db app --collection orders -o results.json
+lazycompass query recent_orders --db app --collection orders --csv -o results.csv
 ```
 
 If the selected connection has `default_database` configured, you can omit `--db`:
@@ -128,6 +129,7 @@ Pipe or save CLI output:
 lazycompass query --db app --collection users --filter '{"active": true}' | jq .
 lazycompass agg recent_orders --collection orders --table > report.txt
 lazycompass query recent_orders --db app --collection orders -o results.json
+lazycompass query --collection users --filter '{"active": true}' --csv > users.csv
 ```
 
 Manage config and data:

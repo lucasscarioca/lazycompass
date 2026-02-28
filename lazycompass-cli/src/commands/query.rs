@@ -56,7 +56,9 @@ pub(crate) fn run_query(
 }
 
 fn build_query_request(args: QueryArgs) -> Result<QueryRequest> {
-    let output = if args.table {
+    let output = if args.csv {
+        OutputFormat::Csv
+    } else if args.table {
         OutputFormat::Table
     } else {
         OutputFormat::JsonPretty
@@ -174,7 +176,9 @@ fn resolve_query_spec(request: &QueryRequest, storage: &StorageSnapshot) -> Resu
 
 #[cfg(test)]
 mod tests {
-    use lazycompass_core::{Config, ConnectionSpec, QueryTarget, SavedQuery, SavedScope};
+    use lazycompass_core::{
+        Config, ConnectionSpec, OutputFormat, QueryTarget, SavedQuery, SavedScope,
+    };
     use lazycompass_storage::StorageSnapshot;
 
     use super::{build_query_request, resolve_query_spec};
@@ -191,6 +195,7 @@ mod tests {
             sort: None,
             limit: None,
             table: false,
+            csv: false,
             output: None,
         }
     }
@@ -227,6 +232,7 @@ mod tests {
             sort: None,
             limit: None,
             table: false,
+            csv: false,
             output: None,
         };
 
@@ -254,6 +260,17 @@ mod tests {
         };
         let err = build_query_request(args).expect_err("expected conflict");
         assert!(err.to_string().contains("cannot be combined"));
+    }
+
+    #[test]
+    fn build_query_request_uses_csv_output_when_requested() {
+        let request = build_query_request(QueryArgs {
+            csv: true,
+            ..base_args()
+        })
+        .expect("request");
+
+        assert_eq!(request.output, OutputFormat::Csv);
     }
 
     #[test]
