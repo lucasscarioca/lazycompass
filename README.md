@@ -95,7 +95,7 @@ Env var naming:
 
 Write actions open your `$VISUAL` or `$EDITOR` for JSON editing (command + args only; no shell expansion).
 
-Documents screen keys: `i` insert, `e` edit, `d` delete, `x` export results, `y` copy results, `Q` save query, `A` save aggregation, `r` run saved query, `a` run saved aggregation. Connections screen key: `n` add connection.
+Documents screen keys: `i` insert, `e` edit, `d` delete, `x` export results, `y` copy results, `Q` save query, `A` save aggregation, `r` run saved query, `a` run saved aggregation. Collections screen key: `I` list indexes. Connections screen key: `n` add connection.
 
 Applied query/aggregation results can be exported from the TUI as JSON, CSV, or table text. Copy-to-clipboard uses native clipboard commands when available and falls back to OSC52. Result export/copy remains available in `read_only` mode.
 
@@ -128,6 +128,7 @@ Pipe or save CLI output:
 ```bash
 lazycompass query --db app --collection users --filter '{"active": true}' | jq .
 lazycompass agg recent_orders --collection orders --table > report.txt
+lazycompass indexes --db app --collection users --table
 lazycompass query recent_orders --db app --collection orders -o results.json
 lazycompass query --collection users --filter '{"active": true}' --csv > users.csv
 ```

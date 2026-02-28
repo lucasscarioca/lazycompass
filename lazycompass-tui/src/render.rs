@@ -125,6 +125,83 @@ impl App {
                     },
                 );
             }
+            Screen::Indexes => {
+                let panes = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(20), Constraint::Percentage(80)])
+                    .split(layout[1]);
+                self.render_list(
+                    frame,
+                    panes[0],
+                    ListView {
+                        title: "Collections",
+                        items: &self.collection_items,
+                        selected: self.collection_index,
+                        load_state: &self.collection_state,
+                        loading_label: "loading collections...",
+                    },
+                );
+                let items = self
+                    .indexes
+                    .iter()
+                    .map(document_preview)
+                    .collect::<Vec<_>>();
+                let title = self.indexes_list_title();
+                self.render_list(
+                    frame,
+                    panes[1],
+                    ListView {
+                        title: &title,
+                        items: &items,
+                        selected: self.index_index,
+                        load_state: &self.index_state,
+                        loading_label: "loading indexes...",
+                    },
+                );
+            }
+            Screen::IndexView => {
+                let panes = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(20), Constraint::Percentage(80)])
+                    .split(layout[1]);
+                let items = self
+                    .indexes
+                    .iter()
+                    .map(document_preview)
+                    .collect::<Vec<_>>();
+                let title = self.indexes_list_title();
+                self.render_list(
+                    frame,
+                    panes[0],
+                    ListView {
+                        title: &title,
+                        items: &items,
+                        selected: self.index_index,
+                        load_state: &self.index_state,
+                        loading_label: "loading indexes...",
+                    },
+                );
+                let max_scroll = self.max_index_scroll();
+                if self.index_scroll > max_scroll {
+                    self.index_scroll = max_scroll;
+                }
+                let lines = self
+                    .index_lines
+                    .iter()
+                    .map(|line| Line::from(line.clone()))
+                    .collect::<Vec<_>>();
+                let body = Paragraph::new(lines)
+                    .style(self.theme.text_style())
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(self.theme.border_style())
+                            .title(Line::from(Span::styled("Index", self.theme.title_style()))),
+                    )
+                    .wrap(Wrap { trim: false })
+                    .scroll((self.index_scroll, 0));
+                frame.render_widget(body, panes[1]);
+            }
             Screen::Documents => {
                 let panes = Layout::default()
                     .direction(Direction::Horizontal)
@@ -514,6 +591,8 @@ impl App {
             Screen::Connections => "Connections",
             Screen::Databases => "Databases",
             Screen::Collections => "Collections",
+            Screen::Indexes => "Indexes",
+            Screen::IndexView => "Index",
             Screen::Documents => "Documents",
             Screen::DocumentView => "Document",
             Screen::ExportFormatSelect => match self.export_action {
@@ -619,6 +698,10 @@ impl App {
         } else {
             vec![Line::from(hint), Line::from(" ")]
         }
+    }
+
+    pub(crate) fn indexes_list_title(&self) -> String {
+        format!("Indexes ({})", self.indexes.len())
     }
 
     pub(crate) fn documents_list_title(&self) -> String {

@@ -10,6 +10,17 @@ impl App {
         false
     }
 
+    pub(crate) fn show_indexes(&mut self) -> Result<()> {
+        if self.screen != Screen::Collections {
+            return Ok(());
+        }
+
+        if let Err(error) = self.start_load_indexes() {
+            self.set_error_message(&error);
+        }
+        Ok(())
+    }
+
     pub(crate) fn request_delete_document(&mut self) -> Result<()> {
         if !matches!(self.screen, Screen::Documents | Screen::DocumentView) {
             return Ok(());

@@ -274,6 +274,47 @@ impl App {
         Ok(())
     }
 
+    pub(crate) fn start_load_indexes(&mut self) -> Result<()> {
+        let connection = self
+            .selected_connection()
+            .ok_or_else(|| anyhow::anyhow!("select a connection"))?;
+        let database = self
+            .selected_database()
+            .ok_or_else(|| anyhow::anyhow!("select a database"))?;
+        let collection = self
+            .selected_collection()
+            .ok_or_else(|| anyhow::anyhow!("select a collection"))?;
+        let config = self.storage.config.clone();
+        let connection_name = connection.name.clone();
+        let database_name = database.to_string();
+        let collection_name = collection.to_string();
+        let request_id = self.next_load_id();
+        self.index_load_id = Some(request_id);
+        self.index_state = LoadState::Loading;
+        self.indexes.clear();
+        self.index_index = None;
+        self.index_lines.clear();
+        self.index_scroll = 0;
+        self.message = Some("loading indexes...".to_string());
+        let sender = self.load_tx.clone();
+        self.runtime.spawn(async move {
+            let executor = MongoExecutor::new();
+            let result = executor
+                .list_indexes(
+                    &config,
+                    Some(&connection_name),
+                    &database_name,
+                    &collection_name,
+                )
+                .await;
+            let _ = sender.send(LoadResult::Indexes {
+                id: request_id,
+                result,
+            });
+        });
+        Ok(())
+    }
+
     pub(crate) fn prepare_document_view(&mut self) {
         let Some(index) = self.document_index else {
             return;
@@ -283,6 +324,14 @@ impl App {
         };
         self.document_lines = format_document(document);
         self.document_scroll = 0;
+    }
+
+    pub(crate) fn prepare_index_view(&mut self) {
+        let Ok(document) = self.selected_index_document() else {
+            return;
+        };
+        self.index_lines = format_document(document);
+        self.index_scroll = 0;
     }
 
     pub(crate) fn selected_connection(&self) -> Option<&ConnectionSpec> {
@@ -300,6 +349,15 @@ impl App {
         self.collection_index
             .and_then(|index| self.collection_items.get(index))
             .map(String::as_str)
+    }
+
+    pub(crate) fn selected_index_document(&self) -> Result<&Document> {
+        let index = self
+            .index_index
+            .ok_or_else(|| anyhow::anyhow!("select an index"))?;
+        self.indexes
+            .get(index)
+            .ok_or_else(|| anyhow::anyhow!("select an index"))
     }
 }
 
@@ -354,6 +412,28 @@ mod tests {
         assert_eq!(app.document_scroll, 0);
         assert_eq!(app.document_pending_index, Some(2));
         assert_eq!(app.message, None);
+    }
+
+    #[test]
+    fn start_load_indexes_resets_index_state() {
+        let mut app = app_with_context();
+        app.indexes = vec![Document::from_iter([(
+            "name".to_string(),
+            Bson::String("_id_".into()),
+        )])];
+        app.index_index = Some(0);
+        app.index_lines = vec!["old".to_string()];
+        app.index_scroll = 3;
+
+        app.start_load_indexes().expect("start indexes");
+
+        assert!(app.index_load_id.is_some());
+        assert!(matches!(app.index_state, LoadState::Loading));
+        assert!(app.indexes.is_empty());
+        assert_eq!(app.index_index, None);
+        assert!(app.index_lines.is_empty());
+        assert_eq!(app.index_scroll, 0);
+        assert_eq!(app.message.as_deref(), Some("loading indexes..."));
     }
 
     #[test]

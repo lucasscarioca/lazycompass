@@ -37,6 +37,10 @@ impl App {
             database_index: None,
             collection_items: Vec::new(),
             collection_index: None,
+            indexes: Vec::new(),
+            index_index: None,
+            index_lines: Vec::new(),
+            index_scroll: 0,
             documents: Vec::new(),
             document_index: None,
             document_page: 0,
@@ -55,6 +59,7 @@ impl App {
             next_load_id: 0,
             database_load_id: None,
             collection_load_id: None,
+            index_load_id: None,
             document_load_id: None,
             saved_query_load_id: None,
             saved_agg_load_id: None,
@@ -62,6 +67,7 @@ impl App {
             inline_agg_load_id: None,
             database_state: LoadState::Idle,
             collection_state: LoadState::Idle,
+            index_state: LoadState::Idle,
             document_state: LoadState::Idle,
             saved_query_state: LoadState::Idle,
             saved_agg_state: LoadState::Idle,
@@ -156,6 +162,33 @@ impl App {
                     Err(error) => {
                         let message = format_error(&error);
                         self.collection_state = LoadState::Failed(message.clone());
+                        self.message = Some(message);
+                    }
+                }
+            }
+            LoadResult::Indexes { id, result } => {
+                if self.index_load_id != Some(id) {
+                    return;
+                }
+                self.index_load_id = None;
+                match result {
+                    Ok(indexes) => {
+                        self.indexes = indexes;
+                        self.index_state = LoadState::Idle;
+                        self.index_index = if self.indexes.is_empty() {
+                            None
+                        } else {
+                            Some(0)
+                        };
+                        self.index_lines.clear();
+                        self.index_scroll = 0;
+                        self.screen = Screen::Indexes;
+                        self.message = Some(format!("loaded {} index(es)", self.indexes.len()));
+                    }
+                    Err(error) => {
+                        let message = format_error(&error);
+                        self.index_state = LoadState::Failed(message.clone());
+                        self.screen = Screen::Indexes;
                         self.message = Some(message);
                     }
                 }
@@ -423,6 +456,7 @@ impl App {
             KeyAction::RunInlineAggregation => self.run_inline_aggregation(terminal)?,
             KeyAction::RunSavedQuery => self.run_saved_query()?,
             KeyAction::RunSavedAggregation => self.run_saved_aggregation()?,
+            KeyAction::ShowIndexes => self.show_indexes()?,
             KeyAction::ClearApplied => self.clear_applied_documents()?,
             KeyAction::ToggleHelp => self.help_visible = !self.help_visible,
             KeyAction::AddConnection => self.start_add_connection()?,

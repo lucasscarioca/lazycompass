@@ -4,7 +4,7 @@ use lazycompass_storage::{ConfigPaths, load_config};
 
 use crate::cli::{Cli, Commands};
 use crate::commands::{
-    run_agg, run_config, run_init, run_insert, run_query, run_update, run_upgrade,
+    run_agg, run_config, run_indexes, run_init, run_insert, run_query, run_update, run_upgrade,
 };
 use crate::logging::{apply_cli_overrides, init_logging};
 
@@ -15,6 +15,12 @@ pub(crate) fn run() -> Result<()> {
 
 enum AppAction {
     Init(crate::cli::InitArgs),
+    Indexes {
+        args: crate::cli::IndexesArgs,
+        write_enabled: bool,
+        allow_pipeline_writes: bool,
+        allow_insecure: bool,
+    },
     Query {
         args: crate::cli::QueryArgs,
         write_enabled: bool,
@@ -51,6 +57,12 @@ enum AppAction {
 fn dispatch(cli: Cli) -> AppAction {
     match cli.command {
         Some(Commands::Init(args)) => AppAction::Init(args),
+        Some(Commands::Indexes(args)) => AppAction::Indexes {
+            args,
+            write_enabled: cli.write_enabled,
+            allow_pipeline_writes: cli.allow_pipeline_writes,
+            allow_insecure: cli.allow_insecure,
+        },
         Some(Commands::Query(args)) => AppAction::Query {
             args,
             write_enabled: cli.write_enabled,
@@ -90,6 +102,12 @@ fn execute(action: AppAction) -> Result<()> {
         AppAction::Init(args) => {
             run_init(args)?;
         }
+        AppAction::Indexes {
+            args,
+            write_enabled,
+            allow_pipeline_writes,
+            allow_insecure,
+        } => run_indexes(args, write_enabled, allow_pipeline_writes, allow_insecure)?,
         AppAction::Query {
             args,
             write_enabled,
@@ -189,6 +207,25 @@ mod tests {
     }
 
     #[test]
+    fn dispatch_routes_indexes_with_global_flags() {
+        let cli = Cli::parse_from([
+            "lazycompass",
+            "--allow-insecure",
+            "indexes",
+            "--collection",
+            "users",
+        ]);
+        let action = dispatch(cli);
+        assert!(matches!(
+            action,
+            AppAction::Indexes {
+                allow_insecure: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn dispatch_routes_upgrade() {
         let cli = Cli::parse_from(["lazycompass", "upgrade", "--version", "1.2.3"]);
         let action = dispatch(cli);
@@ -231,6 +268,42 @@ mod tests {
                 assert!(!args.table);
             }
             _ => panic!("expected query command"),
+        }
+    }
+
+    #[test]
+    fn cli_parser_accepts_indexes_output_flag() {
+        let cli = Cli::parse_from([
+            "lazycompass",
+            "indexes",
+            "--collection",
+            "users",
+            "-o",
+            "indexes.json",
+        ]);
+
+        match cli.command {
+            Some(Commands::Indexes(args)) => {
+                assert_eq!(args.collection.as_deref(), Some("users"));
+                assert_eq!(
+                    args.output.as_deref(),
+                    Some(std::path::Path::new("indexes.json"))
+                );
+            }
+            _ => panic!("expected indexes command"),
+        }
+    }
+
+    #[test]
+    fn cli_parser_accepts_indexes_csv_flag() {
+        let cli = Cli::parse_from(["lazycompass", "indexes", "--collection", "users", "--csv"]);
+
+        match cli.command {
+            Some(Commands::Indexes(args)) => {
+                assert!(args.csv);
+                assert!(!args.table);
+            }
+            _ => panic!("expected indexes command"),
         }
     }
 }

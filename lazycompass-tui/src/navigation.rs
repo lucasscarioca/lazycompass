@@ -14,6 +14,8 @@ impl App {
             Screen::Collections => {
                 Self::select_index(&mut self.collection_index, self.collection_items.len(), 0)
             }
+            Screen::Indexes => Self::select_index(&mut self.index_index, self.indexes.len(), 0),
+            Screen::IndexView => self.index_scroll = 0,
             Screen::Documents => {
                 Self::select_index(&mut self.document_index, self.documents.len(), 0)
             }
@@ -51,6 +53,8 @@ impl App {
             Screen::Collections => {
                 Self::select_last(&mut self.collection_index, self.collection_items.len())
             }
+            Screen::Indexes => Self::select_last(&mut self.index_index, self.indexes.len()),
+            Screen::IndexView => self.index_scroll = self.max_index_scroll(),
             Screen::Documents => Self::select_last(&mut self.document_index, self.documents.len()),
             Screen::DocumentView => self.document_scroll = self.max_document_scroll(),
             Screen::ExportFormatSelect => Self::select_last(&mut self.export_format_index, 3),
@@ -83,6 +87,8 @@ impl App {
             Screen::Collections => {
                 Self::move_selection(&mut self.collection_index, self.collection_items.len(), -1)
             }
+            Screen::Indexes => Self::move_selection(&mut self.index_index, self.indexes.len(), -1),
+            Screen::IndexView => self.scroll_index(-1),
             Screen::Documents => {
                 Self::move_selection(&mut self.document_index, self.documents.len(), -1)
             }
@@ -125,6 +131,8 @@ impl App {
             Screen::Collections => {
                 Self::move_selection(&mut self.collection_index, self.collection_items.len(), 1)
             }
+            Screen::Indexes => Self::move_selection(&mut self.index_index, self.indexes.len(), 1),
+            Screen::IndexView => self.scroll_index(1),
             Screen::Documents => {
                 Self::move_selection(&mut self.document_index, self.documents.len(), 1)
             }
@@ -157,6 +165,8 @@ impl App {
             Screen::Connections => {}
             Screen::Databases => self.screen = Screen::Connections,
             Screen::Collections => self.screen = Screen::Databases,
+            Screen::Indexes => self.screen = Screen::Collections,
+            Screen::IndexView => self.screen = Screen::Indexes,
             Screen::Documents => self.screen = Screen::Collections,
             Screen::DocumentView => self.screen = Screen::Documents,
             Screen::ExportFormatSelect => {
@@ -217,6 +227,13 @@ impl App {
                     self.screen = Screen::Documents;
                 }
             }
+            Screen::Indexes => {
+                if self.index_index.is_some() {
+                    self.prepare_index_view();
+                    self.screen = Screen::IndexView;
+                }
+            }
+            Screen::IndexView => {}
             Screen::Documents => {
                 if self.document_index.is_some() {
                     self.prepare_document_view();
@@ -328,8 +345,27 @@ impl App {
         self.document_scroll = next.min(max_scroll);
     }
 
+    pub(crate) fn scroll_index(&mut self, delta: i16) {
+        if self.index_lines.is_empty() {
+            self.index_scroll = 0;
+            return;
+        }
+        let max_scroll = self.max_index_scroll();
+        let next = if delta < 0 {
+            self.index_scroll.saturating_sub(delta.unsigned_abs())
+        } else {
+            self.index_scroll.saturating_add(delta as u16)
+        };
+        self.index_scroll = next.min(max_scroll);
+    }
+
     pub(crate) fn max_document_scroll(&self) -> u16 {
         let max = self.document_lines.len().saturating_sub(1);
+        max.min(u16::MAX as usize) as u16
+    }
+
+    pub(crate) fn max_index_scroll(&self) -> u16 {
+        let max = self.index_lines.len().saturating_sub(1);
         max.min(u16::MAX as usize) as u16
     }
 }

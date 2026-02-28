@@ -210,6 +210,35 @@ impl MongoExecutor {
         Ok(collections)
     }
 
+    pub async fn list_indexes(
+        &self,
+        config: &Config,
+        connection: Option<&str>,
+        database: &str,
+        collection: &str,
+    ) -> Result<Vec<Document>> {
+        let connection = self.resolve_connection(config, connection)?;
+        let client = connect(config, connection).await?;
+        let database_name = database.to_string();
+        let collection_name = collection.to_string();
+        let database = client.database(&database_name);
+        let collection = database.collection::<Document>(&collection_name);
+
+        let cursor = collection.list_indexes().await.with_context(|| {
+            format!(
+                "failed to list indexes for {}.{}",
+                database_name, collection_name
+            )
+        })?;
+        let indexes = cursor
+            .try_collect::<Vec<_>>()
+            .await?
+            .into_iter()
+            .map(|index| bson::to_document(&index).context("failed to serialize index spec"))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(indexes)
+    }
+
     pub async fn list_documents(
         &self,
         config: &Config,

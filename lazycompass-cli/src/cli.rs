@@ -18,12 +18,31 @@ pub(crate) struct Cli {
 #[derive(Subcommand)]
 pub(crate) enum Commands {
     Init(InitArgs),
+    Indexes(IndexesArgs),
     Query(QueryArgs),
     Agg(AggArgs),
     Insert(InsertArgs),
     Update(UpdateArgs),
     Config(ConfigArgs),
     Upgrade(UpgradeArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct IndexesArgs {
+    #[arg(long)]
+    pub(crate) connection: Option<String>,
+    #[arg(long)]
+    pub(crate) db: Option<String>,
+    #[arg(long)]
+    pub(crate) collection: Option<String>,
+    #[arg(long)]
+    #[arg(conflicts_with = "csv")]
+    pub(crate) table: bool,
+    #[arg(long)]
+    #[arg(conflicts_with = "table")]
+    pub(crate) csv: bool,
+    #[arg(short = 'o', long)]
+    pub(crate) output: Option<PathBuf>,
 }
 
 #[derive(Args)]

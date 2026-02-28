@@ -21,6 +21,7 @@ pub(crate) enum KeyAction {
     RunInlineAggregation,
     RunSavedQuery,
     RunSavedAggregation,
+    ShowIndexes,
     ClearApplied,
     ToggleHelp,
     AddConnection,
@@ -166,6 +167,16 @@ const KEY_BINDINGS: &[KeyBinding] = &[
         modifiers: KeyModifiers::NONE,
     },
     KeyBinding {
+        action: KeyAction::ShowIndexes,
+        code: KeyCode::Char('I'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::ShowIndexes,
+        code: KeyCode::Char('I'),
+        modifiers: KeyModifiers::SHIFT,
+    },
+    KeyBinding {
         action: KeyAction::ClearApplied,
         code: KeyCode::Char('c'),
         modifiers: KeyModifiers::NONE,
@@ -199,6 +210,7 @@ const HINT_EXPORT: &[KeyAction] = &[KeyAction::ExportResults, KeyAction::CopyRes
 const HINT_SAVE: &[KeyAction] = &[KeyAction::SaveQuery, KeyAction::SaveAggregation];
 const HINT_INLINE_RUN: &[KeyAction] = &[KeyAction::RunInlineQuery, KeyAction::RunInlineAggregation];
 const HINT_RUN: &[KeyAction] = &[KeyAction::RunSavedQuery, KeyAction::RunSavedAggregation];
+const HINT_INDEXES: &[KeyAction] = &[KeyAction::ShowIndexes];
 const HINT_HELP: &[KeyAction] = &[KeyAction::ToggleHelp];
 const HINT_QUIT: &[KeyAction] = &[KeyAction::Quit];
 
@@ -256,7 +268,86 @@ const DATABASE_HINTS: &[HintGroup] = &[
     },
 ];
 
-const COLLECTION_HINTS: &[HintGroup] = DATABASE_HINTS;
+const COLLECTION_HINTS: &[HintGroup] = &[
+    HintGroup {
+        actions: HINT_MOVE,
+        label: "move",
+    },
+    HintGroup {
+        actions: HINT_FORWARD,
+        label: "enter",
+    },
+    HintGroup {
+        actions: HINT_INDEXES,
+        label: "indexes",
+    },
+    HintGroup {
+        actions: HINT_BACK,
+        label: "back",
+    },
+    HintGroup {
+        actions: HINT_TOP_BOTTOM,
+        label: "top/bottom",
+    },
+    HintGroup {
+        actions: HINT_HELP,
+        label: "help",
+    },
+    HintGroup {
+        actions: HINT_QUIT,
+        label: "quit",
+    },
+];
+
+const INDEXES_HINTS: &[HintGroup] = &[
+    HintGroup {
+        actions: HINT_MOVE,
+        label: "move",
+    },
+    HintGroup {
+        actions: HINT_FORWARD,
+        label: "view",
+    },
+    HintGroup {
+        actions: HINT_BACK,
+        label: "back",
+    },
+    HintGroup {
+        actions: HINT_TOP_BOTTOM,
+        label: "top/bottom",
+    },
+    HintGroup {
+        actions: HINT_HELP,
+        label: "help",
+    },
+    HintGroup {
+        actions: HINT_QUIT,
+        label: "quit",
+    },
+];
+
+const INDEX_VIEW_HINTS: &[HintGroup] = &[
+    HintGroup {
+        actions: HINT_SCROLL,
+        label: "scroll",
+    },
+    HintGroup {
+        actions: HINT_BACK,
+        label: "back",
+    },
+    HintGroup {
+        actions: HINT_TOP_BOTTOM,
+        label: "top/bottom",
+    },
+    HintGroup {
+        actions: HINT_HELP,
+        label: "help",
+    },
+    HintGroup {
+        actions: HINT_QUIT,
+        label: "quit",
+    },
+];
 
 const DOCUMENT_HINTS: &[HintGroup] = &[
     HintGroup {
@@ -441,6 +532,8 @@ pub(crate) fn hint_groups(screen: Screen) -> &'static [HintGroup] {
         Screen::Connections => CONNECTION_HINTS,
         Screen::Databases => DATABASE_HINTS,
         Screen::Collections => COLLECTION_HINTS,
+        Screen::Indexes => INDEXES_HINTS,
+        Screen::IndexView => INDEX_VIEW_HINTS,
         Screen::Documents => DOCUMENT_HINTS,
         Screen::DocumentView => DOCUMENT_VIEW_HINTS,
         Screen::ExportFormatSelect => EXPORT_FORMAT_HINTS,
@@ -474,6 +567,7 @@ fn action_keys(action: KeyAction) -> &'static [&'static str] {
         KeyAction::RunInlineAggregation => &["S"],
         KeyAction::RunSavedQuery => &["r"],
         KeyAction::RunSavedAggregation => &["a"],
+        KeyAction::ShowIndexes => &["I"],
         KeyAction::ClearApplied => &["c"],
         KeyAction::ToggleHelp => &["?"],
         KeyAction::AddConnection => &["n"],
