@@ -17,6 +17,7 @@
 - Do not use `--write-enabled` unless mutation is requested.
 - Never run aggregation write stages (`$out`, `$merge`) unless user explicitly requests them and command includes `--allow-pipeline-writes`.
 - In read-only mode, DB writes are blocked and local saved-spec/log writes are also blocked.
+- `-o/--output` writes query/aggregation results to a file and is allowed for read-only query work.
 
 Write controls:
 
@@ -75,11 +76,11 @@ lazycompass config add-connection
 Read operations:
 
 ```bash
-lazycompass query <saved_id> [--db <db>] [--collection <collection>] [--connection <name>] [--table]
-lazycompass query --db <db> --collection <collection> [--filter '<json>'] [--projection '<json>'] [--sort '<json>'] [--limit <n>] [--connection <name>] [--table]
+lazycompass query <saved_id> [--db <db>] [--collection <collection>] [--connection <name>] [--table] [-o <path>]
+lazycompass query --db <db> --collection <collection> [--filter '<json>'] [--projection '<json>'] [--sort '<json>'] [--limit <n>] [--connection <name>] [--table] [-o <path>]
 
-lazycompass agg <saved_id> [--db <db>] [--collection <collection>] [--connection <name>] [--table]
-lazycompass agg --db <db> --collection <collection> --pipeline '<json array>' [--connection <name>] [--table]
+lazycompass agg <saved_id> [--db <db>] [--collection <collection>] [--connection <name>] [--table] [-o <path>]
+lazycompass agg --db <db> --collection <collection> --pipeline '<json array>' [--connection <name>] [--table] [-o <path>]
 ```
 
 Write operations (explicit approval only):
@@ -144,6 +145,7 @@ Output:
 
 - Default: pretty JSON
 - Optional: `--table`
+- File output: `-o/--output <path>`
 
 ## 5) Saved Spec Formats
 
