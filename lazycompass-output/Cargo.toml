@@ -1,0 +1,11 @@
+[package]
+name = "lazycompass-output"
+version = "0.6.1"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+anyhow = { workspace = true }
+lazycompass-core = { path = "../lazycompass-core" }
+lazycompass-mongo = { path = "../lazycompass-mongo" }
+serde_json = { workspace = true }

@@ -47,6 +47,7 @@ impl App {
             message,
             confirm: None,
             editor_prompt: None,
+            path_prompt: None,
             editor_command: None,
             warnings,
             load_tx,
@@ -69,6 +70,9 @@ impl App {
             document_result_source: DocumentResultSource::Collection,
             saved_query_index: None,
             saved_agg_index: None,
+            export_action: None,
+            export_format_index: Some(0),
+            export_return_screen: None,
             save_query_scope_index: Some(0),
             save_agg_scope_index: Some(0),
             add_connection_scope_index: Some(0),
@@ -340,6 +344,9 @@ impl App {
         if self.editor_prompt.is_some() {
             return self.handle_editor_prompt_key(key, terminal);
         }
+        if self.path_prompt.is_some() {
+            return self.handle_path_prompt_key(key);
+        }
         if self.confirm.is_some() {
             return self.handle_confirm_key(key, terminal);
         }
@@ -408,6 +415,8 @@ impl App {
             KeyAction::Insert => self.insert_document(terminal)?,
             KeyAction::Edit => self.edit_document(terminal)?,
             KeyAction::Delete => self.request_delete_document()?,
+            KeyAction::ExportResults => self.export_results()?,
+            KeyAction::CopyResults => self.copy_results()?,
             KeyAction::SaveQuery => self.save_query(terminal)?,
             KeyAction::SaveAggregation => self.save_aggregation(terminal)?,
             KeyAction::RunInlineQuery => self.run_inline_query(terminal)?,
@@ -526,6 +535,42 @@ impl App {
         Ok(false)
     }
 
+    pub(crate) fn handle_path_prompt_key(&mut self, key: KeyEvent) -> Result<bool> {
+        let Some(mut prompt) = self.path_prompt.take() else {
+            return Ok(false);
+        };
+
+        match key.code {
+            KeyCode::Esc => {
+                self.message = Some("cancelled".to_string());
+            }
+            KeyCode::Backspace => {
+                prompt.input.pop();
+                self.path_prompt = Some(prompt);
+            }
+            KeyCode::Enter => {
+                if prompt.input.trim().is_empty() {
+                    self.path_prompt = Some(prompt);
+                } else if let Err(error) = self.submit_export_path(prompt.clone()) {
+                    self.path_prompt = Some(prompt);
+                    self.set_error_message(&error);
+                }
+            }
+            KeyCode::Char(ch) => {
+                if !ch.is_control() {
+                    prompt.input.push(ch);
+                }
+                self.path_prompt = Some(prompt);
+            }
+            _ => {
+                self.path_prompt = Some(prompt);
+            }
+        }
+
+        self.last_g = false;
+        Ok(false)
+    }
+
     pub(crate) fn perform_confirm_action(&mut self, action: ConfirmAction) -> Result<()> {
         let guard = WriteGuard::new(self.read_only, self.storage.config.allow_pipeline_writes());
         match action {
@@ -562,6 +607,10 @@ impl App {
                 let path = write_saved_aggregation(&self.paths, &aggregation, true)?;
                 self.upsert_aggregation(aggregation);
                 self.message = Some(format!("saved aggregation to {}", path.display()));
+            }
+            ConfirmAction::OverwriteExport { path, rendered } => {
+                write_rendered_output(&path, &rendered)?;
+                self.message = Some(format!("exported results to {}", path.display()));
             }
         }
         Ok(())

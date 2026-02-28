@@ -13,6 +13,8 @@ pub(crate) enum KeyAction {
     Insert,
     Edit,
     Delete,
+    ExportResults,
+    CopyResults,
     SaveQuery,
     SaveAggregation,
     RunInlineQuery,
@@ -104,6 +106,16 @@ const KEY_BINDINGS: &[KeyBinding] = &[
         modifiers: KeyModifiers::NONE,
     },
     KeyBinding {
+        action: KeyAction::ExportResults,
+        code: KeyCode::Char('x'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::CopyResults,
+        code: KeyCode::Char('y'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
         action: KeyAction::SaveQuery,
         code: KeyCode::Char('Q'),
         modifiers: KeyModifiers::NONE,
@@ -183,6 +195,7 @@ const HINT_TOP_BOTTOM: &[KeyAction] = &[KeyAction::GoTop, KeyAction::GoBottom];
 const HINT_PAGE: &[KeyAction] = &[KeyAction::PreviousPage, KeyAction::NextPage];
 const HINT_EDITING: &[KeyAction] = &[KeyAction::Insert, KeyAction::Edit, KeyAction::Delete];
 const HINT_EDIT_DELETE: &[KeyAction] = &[KeyAction::Edit, KeyAction::Delete];
+const HINT_EXPORT: &[KeyAction] = &[KeyAction::ExportResults, KeyAction::CopyResults];
 const HINT_SAVE: &[KeyAction] = &[KeyAction::SaveQuery, KeyAction::SaveAggregation];
 const HINT_INLINE_RUN: &[KeyAction] = &[KeyAction::RunInlineQuery, KeyAction::RunInlineAggregation];
 const HINT_RUN: &[KeyAction] = &[KeyAction::RunSavedQuery, KeyAction::RunSavedAggregation];
@@ -263,6 +276,10 @@ const DOCUMENT_HINTS: &[HintGroup] = &[
         label: "insert/edit/delete",
     },
     HintGroup {
+        actions: HINT_EXPORT,
+        label: "export/copy",
+    },
+    HintGroup {
         actions: HINT_SAVE,
         label: "save query/agg",
     },
@@ -321,6 +338,33 @@ const SAVED_QUERY_HINTS: &[HintGroup] = &[
 
 const SAVED_AGGREGATION_HINTS: &[HintGroup] = SAVED_QUERY_HINTS;
 
+const EXPORT_FORMAT_HINTS: &[HintGroup] = &[
+    HintGroup {
+        actions: HINT_MOVE,
+        label: "move",
+    },
+    HintGroup {
+        actions: HINT_FORWARD,
+        label: "select",
+    },
+    HintGroup {
+        actions: HINT_BACK,
+        label: "cancel",
+    },
+    HintGroup {
+        actions: HINT_TOP_BOTTOM,
+        label: "top/bottom",
+    },
+    HintGroup {
+        actions: HINT_HELP,
+        label: "help",
+    },
+    HintGroup {
+        actions: HINT_QUIT,
+        label: "quit",
+    },
+];
+
 const ADD_CONNECTION_SCOPE_HINTS: &[HintGroup] = &[
     HintGroup {
         actions: HINT_MOVE,
@@ -364,6 +408,10 @@ const DOCUMENT_VIEW_HINTS: &[HintGroup] = &[
         label: "edit/delete",
     },
     HintGroup {
+        actions: HINT_EXPORT,
+        label: "export/copy",
+    },
+    HintGroup {
         actions: HINT_TOP_BOTTOM,
         label: "top/bottom",
     },
@@ -395,6 +443,7 @@ pub(crate) fn hint_groups(screen: Screen) -> &'static [HintGroup] {
         Screen::Collections => COLLECTION_HINTS,
         Screen::Documents => DOCUMENT_HINTS,
         Screen::DocumentView => DOCUMENT_VIEW_HINTS,
+        Screen::ExportFormatSelect => EXPORT_FORMAT_HINTS,
         Screen::SavedQuerySelect => SAVED_QUERY_HINTS,
         Screen::SavedAggregationSelect => SAVED_AGGREGATION_HINTS,
         Screen::SaveQueryScopeSelect => SAVE_SCOPE_HINTS,
@@ -417,6 +466,8 @@ fn action_keys(action: KeyAction) -> &'static [&'static str] {
         KeyAction::Insert => &["i"],
         KeyAction::Edit => &["e"],
         KeyAction::Delete => &["d"],
+        KeyAction::ExportResults => &["x"],
+        KeyAction::CopyResults => &["y"],
         KeyAction::SaveQuery => &["Q"],
         KeyAction::SaveAggregation => &["A"],
         KeyAction::RunInlineQuery => &["R"],

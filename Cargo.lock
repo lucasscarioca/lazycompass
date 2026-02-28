@@ -1146,6 +1146,7 @@ dependencies = [
  "clap",
  "lazycompass-core",
  "lazycompass-mongo",
+ "lazycompass-output",
  "lazycompass-storage",
  "lazycompass-tui",
  "serde_json",
@@ -1176,6 +1177,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lazycompass-output"
+version = "0.6.1"
+dependencies = [
+ "anyhow",
+ "lazycompass-core",
+ "lazycompass-mongo",
+ "serde_json",
+]
+
+[[package]]
 name = "lazycompass-storage"
 version = "0.6.1"
 dependencies = [
@@ -1193,9 +1204,11 @@ name = "lazycompass-tui"
 version = "0.6.1"
 dependencies = [
  "anyhow",
+ "base64",
  "crossterm",
  "lazycompass-core",
  "lazycompass-mongo",
+ "lazycompass-output",
  "lazycompass-storage",
  "ratatui",
  "serde_json",

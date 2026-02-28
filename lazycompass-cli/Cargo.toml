@@ -9,6 +9,7 @@ anyhow = { workspace = true }
 clap = { workspace = true }
 lazycompass-core = { path = "../lazycompass-core" }
 lazycompass-mongo = { path = "../lazycompass-mongo" }
+lazycompass-output = { path = "../lazycompass-output" }
 lazycompass-storage = { path = "../lazycompass-storage" }
 lazycompass-tui = { path = "../lazycompass-tui" }
 serde_json = { workspace = true }

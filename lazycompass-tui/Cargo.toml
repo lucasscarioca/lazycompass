@@ -6,8 +6,10 @@ license = "MIT"
 
 [dependencies]
 anyhow = { workspace = true }
+base64 = { workspace = true }
 lazycompass-core = { path = "../lazycompass-core" }
 lazycompass-mongo = { path = "../lazycompass-mongo" }
+lazycompass-output = { path = "../lazycompass-output" }
 lazycompass-storage = { path = "../lazycompass-storage" }
 crossterm = { workspace = true }
 ratatui = { workspace = true }

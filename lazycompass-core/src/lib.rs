@@ -187,6 +187,7 @@ fn redact_query_field_in_line(line: &str, field: &str) -> String {
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
     JsonPretty,
+    Csv,
     Table,
 }
 
@@ -194,6 +195,7 @@ impl OutputFormat {
     pub fn label(self) -> &'static str {
         match self {
             OutputFormat::JsonPretty => "json",
+            OutputFormat::Csv => "csv",
             OutputFormat::Table => "table",
         }
     }

@@ -7,7 +7,9 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 ## [Unreleased]
 
 - TUI: add inline query/aggregation drafts so users can edit, run, retry, and save specs after validating results.
+- TUI: add export-to-file and copy-to-clipboard for applied query/aggregation results, with JSON/CSV/table formats and single-document export from the document view.
 - CLI: add `-o`/`--output` for `query` and `agg` to write rendered results to a file.
+- Output: extract shared result rendering into a workspace crate and add CSV rendering for future CLI/TUI reuse.
 - CLI: allow omitting `--db` for `query`, `agg`, `insert`, and `update` when the selected connection has `default_database`; shared saved query/aggregation runs now use the same fallback.
 - Installer: stop surfacing raw `curl` 404 output when optional checksum/signature assets are unavailable during `lazycompass upgrade`.
 - Storage: auto-normalize config/saved-spec permissions (`700` dirs, `600` files) on load to prevent recurring footer permission warnings.

@@ -307,6 +307,141 @@ impl App {
         Ok(())
     }
 
+    pub(crate) fn export_results(&mut self) -> Result<()> {
+        self.start_export_action(ExportAction::File)
+    }
+
+    pub(crate) fn copy_results(&mut self) -> Result<()> {
+        self.start_export_action(ExportAction::Clipboard)
+    }
+
+    pub(crate) fn start_export_action(&mut self, action: ExportAction) -> Result<()> {
+        if self.export_target().is_err() {
+            self.message = Some("export only available for query/aggregation results".to_string());
+            return Ok(());
+        }
+
+        let return_screen = match self.screen {
+            Screen::Documents | Screen::DocumentView => self.screen,
+            _ => return Ok(()),
+        };
+        self.export_action = Some(action);
+        self.export_return_screen = Some(return_screen);
+        self.export_format_index = Some(0);
+        self.path_prompt = None;
+        self.screen = Screen::ExportFormatSelect;
+        self.message = Some(match action {
+            ExportAction::File => "select export format".to_string(),
+            ExportAction::Clipboard => "select copy format".to_string(),
+        });
+        Ok(())
+    }
+
+    pub(crate) fn select_export_format(&mut self) -> Result<()> {
+        let format = self.selected_export_format()?;
+        let action = self
+            .export_action
+            .ok_or_else(|| anyhow::anyhow!("select an export action"))?;
+        let target = self.export_target()?;
+        let rendered = render_documents(format, &target.documents)?;
+        let return_screen = self.export_return_screen.unwrap_or(Screen::Documents);
+        self.screen = return_screen;
+        self.export_action = None;
+        self.export_return_screen = None;
+        self.export_format_index = Some(0);
+
+        match action {
+            ExportAction::File => {
+                self.path_prompt = Some(PathPromptState {
+                    prompt: "export path".to_string(),
+                    input: suggested_export_filename(
+                        &target.source,
+                        format,
+                        target.single_document,
+                    ),
+                    rendered,
+                });
+                self.message = Some("enter export path".to_string());
+            }
+            ExportAction::Clipboard => {
+                clipboard::copy_to_clipboard(&rendered)?;
+                self.message = Some("copied results to clipboard".to_string());
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn submit_export_path(&mut self, prompt: PathPromptState) -> Result<()> {
+        let path = PathBuf::from(prompt.input.trim());
+        if path.exists() {
+            self.confirm = Some(ConfirmState {
+                prompt: format!("overwrite export file '{}'?", path.display()),
+                action: ConfirmAction::OverwriteExport {
+                    path,
+                    rendered: prompt.rendered,
+                },
+                input: String::new(),
+                required: None,
+            });
+            return Ok(());
+        }
+
+        write_rendered_output(&path, &prompt.rendered)?;
+        self.message = Some(format!("exported results to {}", path.display()));
+        Ok(())
+    }
+
+    pub(crate) fn selected_export_format(&self) -> Result<OutputFormat> {
+        match self.export_format_index {
+            Some(0) => Ok(OutputFormat::JsonPretty),
+            Some(1) => Ok(OutputFormat::Csv),
+            Some(2) => Ok(OutputFormat::Table),
+            _ => anyhow::bail!("select an export format"),
+        }
+    }
+
+    pub(crate) fn export_target(&self) -> Result<ExportTarget> {
+        let source = match &self.document_result_source {
+            DocumentResultSource::SavedQuery { name } => {
+                ExportNameSource::SavedQuery { name: name.clone() }
+            }
+            DocumentResultSource::SavedAggregation { name } => {
+                ExportNameSource::SavedAggregation { name: name.clone() }
+            }
+            DocumentResultSource::InlineQuery => ExportNameSource::InlineQuery,
+            DocumentResultSource::InlineAggregation => ExportNameSource::InlineAggregation,
+            DocumentResultSource::Collection => {
+                anyhow::bail!("export only available for query/aggregation results")
+            }
+        };
+
+        match self
+            .export_screen()
+            .ok_or_else(|| anyhow::anyhow!("export only available for query/aggregation results"))?
+        {
+            Screen::Documents => Ok(ExportTarget {
+                documents: self.documents.clone(),
+                source,
+                single_document: false,
+            }),
+            Screen::DocumentView => Ok(ExportTarget {
+                documents: vec![self.selected_document()?.clone()],
+                source,
+                single_document: true,
+            }),
+            _ => anyhow::bail!("export only available for query/aggregation results"),
+        }
+    }
+
+    pub(crate) fn export_screen(&self) -> Option<Screen> {
+        match self.screen {
+            Screen::Documents | Screen::DocumentView => Some(self.screen),
+            Screen::ExportFormatSelect => self.export_return_screen,
+            _ => None,
+        }
+    }
+
     pub(crate) fn start_add_connection(&mut self) -> Result<()> {
         if self.screen != Screen::Connections {
             return Ok(());
@@ -967,6 +1102,7 @@ impl App {
 mod tests {
     use lazycompass_core::{Config, ConnectionSpec, SavedAggregation, SavedQuery, SavedScope};
     use lazycompass_storage::StorageSnapshot;
+    use std::fs;
 
     use super::*;
 
@@ -1189,6 +1325,160 @@ mod tests {
         app.start_add_connection().expect("start add connection");
         assert_eq!(app.screen, Screen::AddConnectionScopeSelect);
         assert_eq!(app.add_connection_scope_index, Some(0));
+    }
+
+    #[test]
+    fn export_results_is_unavailable_for_collection_browsing() {
+        let mut app = app_with_document_context();
+        app.document_result_source = DocumentResultSource::Collection;
+
+        app.export_results().expect("export results");
+
+        assert_eq!(
+            app.message.as_deref(),
+            Some("export only available for query/aggregation results")
+        );
+        assert_eq!(app.screen, Screen::Documents);
+    }
+
+    #[test]
+    fn export_results_is_available_in_read_only_mode() {
+        let mut storage = storage_with_context();
+        storage.config.read_only = Some(true);
+        let mut app = App::test_app_with_storage(storage);
+        app.screen = Screen::Documents;
+        app.connection_index = Some(0);
+        app.database_items = vec!["app".to_string()];
+        app.database_index = Some(0);
+        app.collection_items = vec!["users".to_string()];
+        app.collection_index = Some(0);
+        app.documents = vec![Document::from_iter([
+            ("_id".to_string(), Bson::String("user-1".to_string())),
+            (
+                "email".to_string(),
+                Bson::String("a@example.com".to_string()),
+            ),
+        ])];
+        app.document_index = Some(0);
+        app.document_result_source = DocumentResultSource::SavedQuery {
+            name: "recent_orders".to_string(),
+        };
+
+        app.export_results().expect("export results");
+
+        assert_eq!(app.screen, Screen::ExportFormatSelect);
+        assert_eq!(app.export_action, Some(ExportAction::File));
+    }
+
+    #[test]
+    fn select_export_format_for_file_opens_path_prompt() {
+        let mut app = app_with_document_context();
+        app.document_result_source = DocumentResultSource::SavedQuery {
+            name: "recent_orders".to_string(),
+        };
+
+        app.export_results().expect("export results");
+        app.export_format_index = Some(1);
+        app.select_export_format().expect("select export format");
+
+        assert_eq!(app.screen, Screen::Documents);
+        match &app.path_prompt {
+            Some(prompt) => {
+                assert_eq!(prompt.prompt, "export path");
+                assert_eq!(prompt.input, "recent_orders.csv");
+                assert!(prompt.rendered.starts_with("_id,email\n"));
+            }
+            None => panic!("expected path prompt"),
+        }
+    }
+
+    #[test]
+    fn export_target_uses_selected_document_in_document_view() {
+        let mut app = app_with_document_context();
+        app.documents.push(Document::from_iter([
+            ("_id".to_string(), Bson::String("user-2".to_string())),
+            (
+                "email".to_string(),
+                Bson::String("b@example.com".to_string()),
+            ),
+        ]));
+        app.document_index = Some(1);
+        app.document_result_source = DocumentResultSource::InlineQuery;
+        app.screen = Screen::DocumentView;
+
+        let target = app.export_target().expect("export target");
+
+        assert!(target.single_document);
+        assert_eq!(target.documents.len(), 1);
+        assert_eq!(
+            target.documents[0].get("_id"),
+            Some(&Bson::String("user-2".to_string()))
+        );
+    }
+
+    #[test]
+    fn submit_export_path_writes_file() {
+        let mut app = app_with_document_context();
+        let path = std::env::temp_dir().join(format!(
+            "lazycompass_export_test_{}_{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+
+        app.submit_export_path(PathPromptState {
+            prompt: "export path".to_string(),
+            input: path.display().to_string(),
+            rendered: "[{\"ok\":true}]".to_string(),
+        })
+        .expect("submit export path");
+
+        let contents = fs::read_to_string(&path).expect("read export");
+        assert_eq!(contents, "[{\"ok\":true}]");
+        let expected = format!("exported results to {}", path.display());
+        assert_eq!(app.message.as_deref(), Some(expected.as_str()));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn submit_export_path_requests_overwrite_when_file_exists() {
+        let mut app = app_with_document_context();
+        let path = std::env::temp_dir().join(format!(
+            "lazycompass_export_overwrite_{}_{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        fs::write(&path, "old").expect("write existing export");
+
+        app.submit_export_path(PathPromptState {
+            prompt: "export path".to_string(),
+            input: path.display().to_string(),
+            rendered: "new".to_string(),
+        })
+        .expect("submit export path");
+
+        match &app.confirm {
+            Some(ConfirmState {
+                action:
+                    ConfirmAction::OverwriteExport {
+                        path: confirm_path,
+                        rendered,
+                    },
+                ..
+            }) => {
+                assert_eq!(confirm_path, &path);
+                assert_eq!(rendered, "new");
+            }
+            _ => panic!("expected overwrite confirm"),
+        }
+
+        let _ = fs::remove_file(path);
     }
 
     fn test_terminal() -> Terminal<CrosstermBackend<Stdout>> {

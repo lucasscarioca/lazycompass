@@ -18,6 +18,7 @@ impl App {
                 Self::select_index(&mut self.document_index, self.documents.len(), 0)
             }
             Screen::DocumentView => self.document_scroll = 0,
+            Screen::ExportFormatSelect => Self::select_index(&mut self.export_format_index, 3, 0),
             Screen::SavedQuerySelect => {
                 Self::select_index(&mut self.saved_query_index, self.storage.queries.len(), 0)
             }
@@ -52,6 +53,7 @@ impl App {
             }
             Screen::Documents => Self::select_last(&mut self.document_index, self.documents.len()),
             Screen::DocumentView => self.document_scroll = self.max_document_scroll(),
+            Screen::ExportFormatSelect => Self::select_last(&mut self.export_format_index, 3),
             Screen::SavedQuerySelect => {
                 Self::select_last(&mut self.saved_query_index, self.storage.queries.len())
             }
@@ -85,6 +87,9 @@ impl App {
                 Self::move_selection(&mut self.document_index, self.documents.len(), -1)
             }
             Screen::DocumentView => self.scroll_document(-1),
+            Screen::ExportFormatSelect => {
+                Self::move_selection(&mut self.export_format_index, 3, -1)
+            }
             Screen::SavedQuerySelect => {
                 Self::move_selection(&mut self.saved_query_index, self.storage.queries.len(), -1)
             }
@@ -124,6 +129,7 @@ impl App {
                 Self::move_selection(&mut self.document_index, self.documents.len(), 1)
             }
             Screen::DocumentView => self.scroll_document(1),
+            Screen::ExportFormatSelect => Self::move_selection(&mut self.export_format_index, 3, 1),
             Screen::SavedQuerySelect => {
                 Self::move_selection(&mut self.saved_query_index, self.storage.queries.len(), 1)
             }
@@ -153,6 +159,12 @@ impl App {
             Screen::Collections => self.screen = Screen::Databases,
             Screen::Documents => self.screen = Screen::Collections,
             Screen::DocumentView => self.screen = Screen::Documents,
+            Screen::ExportFormatSelect => {
+                self.screen = self.export_return_screen.unwrap_or(Screen::Documents);
+                self.export_action = None;
+                self.export_return_screen = None;
+                self.export_format_index = Some(0);
+            }
             Screen::SavedQuerySelect => self.screen = Screen::Documents,
             Screen::SavedAggregationSelect => self.screen = Screen::Documents,
             Screen::SaveQueryScopeSelect => {
@@ -212,6 +224,11 @@ impl App {
                 }
             }
             Screen::DocumentView => {}
+            Screen::ExportFormatSelect => {
+                if let Err(error) = self.select_export_format() {
+                    self.set_error_message(&error);
+                }
+            }
             Screen::SavedQuerySelect => {
                 if let Err(error) = self.start_execute_saved_query() {
                     self.set_error_message(&error);

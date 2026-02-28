@@ -205,6 +205,28 @@ impl App {
                     .scroll((self.document_scroll, 0));
                 frame.render_widget(body, panes[1]);
             }
+            Screen::ExportFormatSelect => {
+                let items = vec![
+                    "JSON (pretty array)".to_string(),
+                    "CSV (one row per document)".to_string(),
+                    "Table (plain text)".to_string(),
+                ];
+                let title = match self.export_action {
+                    Some(ExportAction::Clipboard) => "Select Format to Copy",
+                    _ => "Select Format to Export",
+                };
+                self.render_list(
+                    frame,
+                    layout[1],
+                    ListView {
+                        title,
+                        items: &items,
+                        selected: self.export_format_index,
+                        load_state: &LoadState::Idle,
+                        loading_label: "",
+                    },
+                );
+            }
             Screen::SavedQuerySelect => {
                 let panes = Layout::default()
                     .direction(Direction::Horizontal)
@@ -494,6 +516,10 @@ impl App {
             Screen::Collections => "Collections",
             Screen::Documents => "Documents",
             Screen::DocumentView => "Document",
+            Screen::ExportFormatSelect => match self.export_action {
+                Some(ExportAction::Clipboard) => "Copy Results",
+                _ => "Export Results",
+            },
             Screen::SavedQuerySelect => "Run Saved Query",
             Screen::SavedAggregationSelect => "Run Saved Aggregation",
             Screen::SaveQueryScopeSelect => "Save Query",
@@ -541,6 +567,21 @@ impl App {
                     "Enter to launch editor (current: {input_display})  Esc to cancel"
                 )),
             ]
+        } else if let Some(path_prompt) = &self.path_prompt {
+            let input_display = if path_prompt.input.is_empty() {
+                "[type below]".to_string()
+            } else {
+                format!("'{}'", path_prompt.input)
+            };
+            vec![
+                Line::from(Span::styled(
+                    path_prompt.prompt.clone(),
+                    self.theme.warning_style(),
+                )),
+                Line::from(format!(
+                    "Enter to export (current: {input_display})  Esc to cancel"
+                )),
+            ]
         } else if let Some(confirm) = &self.confirm {
             let action_line = if let Some(required) = confirm.required {
                 let input_display = if confirm.input.is_empty() {
@@ -585,16 +626,20 @@ impl App {
         match &self.document_result_source {
             DocumentResultSource::Collection => base,
             DocumentResultSource::SavedQuery { name } => {
-                format!("{base} [saved query: {name}] [c clear applied]")
+                format!("{base} [saved query: {name}] [x export] [y copy] [c clear applied]")
             }
             DocumentResultSource::SavedAggregation { name } => {
-                format!("{base} [saved aggregation: {name}] [c clear applied]")
+                format!("{base} [saved aggregation: {name}] [x export] [y copy] [c clear applied]")
             }
             DocumentResultSource::InlineQuery => {
-                format!("{base} [inline query] [e edit draft] [c clear applied]")
+                format!(
+                    "{base} [inline query] [e edit draft] [x export] [y copy] [c clear applied]"
+                )
             }
             DocumentResultSource::InlineAggregation => {
-                format!("{base} [inline aggregation] [e edit draft] [c clear applied]")
+                format!(
+                    "{base} [inline aggregation] [e edit draft] [x export] [y copy] [c clear applied]"
+                )
             }
         }
     }

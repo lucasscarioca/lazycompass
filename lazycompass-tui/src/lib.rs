@@ -6,12 +6,15 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use lazycompass_core::{
-    Config, ConnectionSpec, SavedAggregation, SavedQuery, SavedScope, WriteGuard,
+    Config, ConnectionSpec, OutputFormat, SavedAggregation, SavedQuery, SavedScope, WriteGuard,
     redact_sensitive_text,
 };
 use lazycompass_mongo::{
     Bson, Document, DocumentDeleteSpec, DocumentInsertSpec, DocumentListSpec, DocumentReplaceSpec,
     MongoExecutor, parse_json_document,
+};
+use lazycompass_output::{
+    ExportNameSource, render_documents, suggested_export_filename, write_rendered_output,
 };
 use lazycompass_storage::{
     ConfigPaths, StorageSnapshot, append_connection_to_global_config,
@@ -35,6 +38,7 @@ use tokio::runtime::Runtime;
 
 mod actions;
 mod app_loop;
+mod clipboard;
 mod editor;
 mod errors;
 mod formatting;
@@ -71,6 +75,7 @@ enum Screen {
     Collections,
     Documents,
     DocumentView,
+    ExportFormatSelect,
     SavedQuerySelect,
     SavedAggregationSelect,
     SaveQueryScopeSelect,
@@ -94,6 +99,13 @@ struct EditorPromptState {
 }
 
 #[derive(Debug, Clone)]
+struct PathPromptState {
+    prompt: String,
+    input: String,
+    rendered: String,
+}
+
+#[derive(Debug, Clone)]
 enum ConfirmAction {
     DeleteDocument {
         spec: DocumentDeleteSpec,
@@ -104,6 +116,10 @@ enum ConfirmAction {
     },
     OverwriteAggregation {
         aggregation: SavedAggregation,
+    },
+    OverwriteExport {
+        path: PathBuf,
+        rendered: String,
     },
 }
 
@@ -148,6 +164,12 @@ enum QuerySaveSource {
 enum AggregationSaveSource {
     EmptyTemplate,
     InlineDraft(InlineAggregationPayload),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExportAction {
+    File,
+    Clipboard,
 }
 
 #[derive(Debug, Clone)]
@@ -258,6 +280,12 @@ struct ListView<'a> {
     loading_label: &'a str,
 }
 
+struct ExportTarget {
+    documents: Vec<Document>,
+    source: ExportNameSource,
+    single_document: bool,
+}
+
 struct App {
     paths: ConfigPaths,
     storage: StorageSnapshot,
@@ -281,6 +309,7 @@ struct App {
     message: Option<String>,
     confirm: Option<ConfirmState>,
     editor_prompt: Option<EditorPromptState>,
+    path_prompt: Option<PathPromptState>,
     editor_command: Option<String>,
     warnings: VecDeque<String>,
     load_tx: Sender<LoadResult>,
@@ -303,6 +332,9 @@ struct App {
     document_result_source: DocumentResultSource,
     saved_query_index: Option<usize>,
     saved_agg_index: Option<usize>,
+    export_action: Option<ExportAction>,
+    export_format_index: Option<usize>,
+    export_return_screen: Option<Screen>,
     save_query_scope_index: Option<usize>,
     save_agg_scope_index: Option<usize>,
     add_connection_scope_index: Option<usize>,
