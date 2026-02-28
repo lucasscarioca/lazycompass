@@ -37,6 +37,7 @@ pub(crate) fn run_query(
             "--db is required for inline queries",
         )?);
     }
+    let output_path = args.output.clone();
     let request = build_query_request(args)?;
     let spec = resolve_query_spec(&request, &storage)?;
     let executor = MongoExecutor::new();
@@ -51,7 +52,7 @@ pub(crate) fn run_query(
     );
     let runtime = tokio::runtime::Runtime::new().context("unable to start async runtime")?;
     let documents = runtime.block_on(executor.execute_query(&config, &spec))?;
-    print_documents(request.output, &documents)
+    print_documents(request.output, &documents, output_path.as_deref())
 }
 
 fn build_query_request(args: QueryArgs) -> Result<QueryRequest> {
@@ -190,6 +191,7 @@ mod tests {
             sort: None,
             limit: None,
             table: false,
+            output: None,
         }
     }
 
@@ -225,6 +227,7 @@ mod tests {
             sort: None,
             limit: None,
             table: false,
+            output: None,
         };
 
         let request = build_query_request(args).expect("request");

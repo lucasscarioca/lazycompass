@@ -1,4 +1,5 @@
 use clap::{Args, Parser, Subcommand};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "lazycompass")]
@@ -45,6 +46,8 @@ pub(crate) struct QueryArgs {
     pub(crate) limit: Option<u64>,
     #[arg(long)]
     pub(crate) table: bool,
+    #[arg(short = 'o', long)]
+    pub(crate) output: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -61,6 +64,8 @@ pub(crate) struct AggArgs {
     pub(crate) pipeline: Option<String>,
     #[arg(long)]
     pub(crate) table: bool,
+    #[arg(short = 'o', long)]
+    pub(crate) output: Option<PathBuf>,
 }
 
 #[derive(Args)]

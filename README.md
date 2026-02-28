@@ -103,6 +103,7 @@ Run a saved query or aggregation:
 lazycompass query app.users.active_users
 lazycompass agg app.orders.orders_by_user --table
 lazycompass query recent_orders --db app --collection orders
+lazycompass query recent_orders --db app --collection orders -o results.json
 ```
 
 If the selected connection has `default_database` configured, you can omit `--db`:
@@ -117,6 +118,14 @@ Run an inline query or aggregation:
 ```bash
 lazycompass query --db lazycompass --collection users --filter '{"active": true}'
 lazycompass agg --db lazycompass --collection orders --pipeline '[{"$group": {"_id": "$userId", "total": {"$sum": "$total"}}}]'
+```
+
+Pipe or save CLI output:
+
+```bash
+lazycompass query --db app --collection users --filter '{"active": true}' | jq .
+lazycompass agg recent_orders --collection orders --table > report.txt
+lazycompass query recent_orders --db app --collection orders -o results.json
 ```
 
 Manage config and data:

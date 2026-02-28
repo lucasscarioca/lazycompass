@@ -37,6 +37,7 @@ pub(crate) fn run_agg(
             "--db is required for inline aggregations",
         )?);
     }
+    let output_path = args.output.clone();
     let request = build_agg_request(args)?;
     let spec = resolve_aggregation_spec(&request, &storage)?;
     let executor = MongoExecutor::new();
@@ -51,7 +52,7 @@ pub(crate) fn run_agg(
     );
     let runtime = tokio::runtime::Runtime::new().context("unable to start async runtime")?;
     let documents = runtime.block_on(executor.execute_aggregation(&config, &spec))?;
-    print_documents(request.output, &documents)
+    print_documents(request.output, &documents, output_path.as_deref())
 }
 
 fn build_agg_request(args: AggArgs) -> Result<AggregationRequest> {
@@ -174,6 +175,7 @@ mod tests {
             collection: Some("orders".to_string()),
             pipeline: Some("[]".to_string()),
             table: false,
+            output: None,
         }
     }
 
@@ -209,6 +211,7 @@ mod tests {
             collection: Some("orders".to_string()),
             pipeline: Some("[]".to_string()),
             table: false,
+            output: None,
         };
 
         assert!(build_agg_request(args).is_err());
