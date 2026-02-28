@@ -85,6 +85,17 @@ impl App {
         if !matches!(self.screen, Screen::Documents | Screen::DocumentView) {
             return Ok(());
         }
+        if self.screen == Screen::Documents {
+            match self.active_inline_draft {
+                Some(InlineDraftKind::Query) => {
+                    return self.edit_inline_query_draft(terminal);
+                }
+                Some(InlineDraftKind::Aggregation) => {
+                    return self.edit_inline_aggregation_draft(terminal);
+                }
+                None => {}
+            }
+        }
         if self.block_if_read_only("edit documents") {
             return Ok(());
         }
@@ -120,6 +131,12 @@ impl App {
         if self.block_if_read_only("save queries") {
             return Ok(());
         }
+        self.query_save_source = self
+            .inline_query_draft
+            .as_ref()
+            .and_then(|draft| draft.parsed.clone())
+            .map(QuerySaveSource::InlineDraft)
+            .unwrap_or(QuerySaveSource::EmptyTemplate);
         self.save_query_scope_index = Some(0);
         self.screen = Screen::SaveQueryScopeSelect;
         self.message = Some("select save mode for query".to_string());
@@ -141,16 +158,23 @@ impl App {
             }
             _ => return Ok(()),
         };
-        let template = SavedQuery {
-            id: default_saved_id("query", &scope),
-            scope,
-            filter: None,
-            projection: None,
-            sort: None,
-            limit: None,
-        };
         self.screen = Screen::Documents;
-        let action = PendingEditorAction::SaveQuery { template };
+        let action = match self.query_save_source.clone() {
+            QuerySaveSource::EmptyTemplate => {
+                let template = SavedQuery {
+                    id: default_saved_id("query", &scope),
+                    scope,
+                    filter: None,
+                    projection: None,
+                    sort: None,
+                    limit: None,
+                };
+                PendingEditorAction::SaveQuery { template }
+            }
+            QuerySaveSource::InlineDraft(draft) => {
+                PendingEditorAction::SaveInlineQuery { scope, draft }
+            }
+        };
         let Some(_) = self.ensure_editor_command(action.clone())? else {
             return Ok(());
         };
@@ -169,6 +193,12 @@ impl App {
         if self.block_if_read_only("save aggregations") {
             return Ok(());
         }
+        self.aggregation_save_source = self
+            .inline_aggregation_draft
+            .as_ref()
+            .and_then(|draft| draft.parsed.clone())
+            .map(AggregationSaveSource::InlineDraft)
+            .unwrap_or(AggregationSaveSource::EmptyTemplate);
         self.save_agg_scope_index = Some(0);
         self.screen = Screen::SaveAggregationScopeSelect;
         self.message = Some("select save mode for aggregation".to_string());
@@ -190,18 +220,55 @@ impl App {
             }
             _ => return Ok(()),
         };
-        let template = SavedAggregation {
-            id: default_saved_id("aggregation", &scope),
-            scope,
-            pipeline: "[]".to_string(),
-        };
         self.screen = Screen::Documents;
-        let action = PendingEditorAction::SaveAggregation { template };
+        let action = match self.aggregation_save_source.clone() {
+            AggregationSaveSource::EmptyTemplate => {
+                let template = SavedAggregation {
+                    id: default_saved_id("aggregation", &scope),
+                    scope,
+                    pipeline: "[]".to_string(),
+                };
+                PendingEditorAction::SaveAggregation { template }
+            }
+            AggregationSaveSource::InlineDraft(draft) => {
+                PendingEditorAction::SaveInlineAggregation { scope, draft }
+            }
+        };
         let Some(_) = self.ensure_editor_command(action.clone())? else {
             return Ok(());
         };
         self.perform_editor_action(action, terminal)?;
         Ok(())
+    }
+
+    pub(crate) fn run_inline_query(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<()> {
+        if self.screen != Screen::Documents {
+            return Ok(());
+        }
+        let _ = self.selected_context()?;
+        let action = PendingEditorAction::RunInlineQuery;
+        let Some(_) = self.ensure_editor_command(action.clone())? else {
+            return Ok(());
+        };
+        self.perform_editor_action(action, terminal)
+    }
+
+    pub(crate) fn run_inline_aggregation(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<()> {
+        if self.screen != Screen::Documents {
+            return Ok(());
+        }
+        let _ = self.selected_context()?;
+        let action = PendingEditorAction::RunInlineAggregation;
+        let Some(_) = self.ensure_editor_command(action.clone())? else {
+            return Ok(());
+        };
+        self.perform_editor_action(action, terminal)
     }
 
     pub(crate) fn run_saved_query(&mut self) -> Result<()> {
@@ -427,6 +494,16 @@ impl App {
             PendingEditorAction::SaveAggregation { template } => {
                 self.save_aggregation_with_template(terminal, template)
             }
+            PendingEditorAction::RunInlineQuery => self.run_inline_query_with_editor(terminal),
+            PendingEditorAction::RunInlineAggregation => {
+                self.run_inline_aggregation_with_editor(terminal)
+            }
+            PendingEditorAction::SaveInlineQuery { scope, draft } => {
+                self.save_inline_query_with_scope(terminal, scope, draft)
+            }
+            PendingEditorAction::SaveInlineAggregation { scope, draft } => {
+                self.save_inline_aggregation_with_scope(terminal, scope, draft)
+            }
             PendingEditorAction::AddConnection { scope, template } => {
                 self.perform_add_connection_editor_action(terminal, scope, template)
             }
@@ -546,6 +623,41 @@ impl App {
         Ok(())
     }
 
+    pub(crate) fn save_inline_query_with_scope(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+        scope: SavedScope,
+        draft: InlineQueryPayload,
+    ) -> Result<()> {
+        let editor = self
+            .editor_command
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("editor command missing"))?;
+        let initial = render_query_save_template(&default_saved_id("query", &scope), &draft)
+            .context("unable to render query save template")?;
+        let contents = self.open_editor(terminal, editor, "query", &initial)?;
+        if is_editor_cancelled(&contents, &initial) {
+            self.message = Some("cancelled".to_string());
+            return Ok(());
+        }
+        let query = parse_query_save_input(&contents, scope)?;
+        query.validate().context("invalid saved query")?;
+        let path = saved_query_path(&self.paths, &query.id)?;
+        if path.exists() {
+            self.confirm = Some(ConfirmState {
+                prompt: format!("overwrite saved query '{}'? (y/n)", query.id),
+                action: ConfirmAction::OverwriteQuery { query },
+                input: String::new(),
+                required: None,
+            });
+            return Ok(());
+        }
+        let path = write_saved_query(&self.paths, &query, false)?;
+        self.upsert_query(query);
+        self.message = Some(format!("saved query to {}", path.display()));
+        Ok(())
+    }
+
     pub(crate) fn save_aggregation_with_template(
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
@@ -579,6 +691,158 @@ impl App {
         let path = write_saved_aggregation(&self.paths, &aggregation, false)?;
         self.upsert_aggregation(aggregation);
         self.message = Some(format!("saved aggregation to {}", path.display()));
+        Ok(())
+    }
+
+    pub(crate) fn save_inline_aggregation_with_scope(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+        scope: SavedScope,
+        draft: InlineAggregationPayload,
+    ) -> Result<()> {
+        let editor = self
+            .editor_command
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("editor command missing"))?;
+        let initial =
+            render_aggregation_save_template(&default_saved_id("aggregation", &scope), &draft)
+                .context("unable to render aggregation save template")?;
+        let contents = self.open_editor(terminal, editor, "aggregation", &initial)?;
+        if is_editor_cancelled(&contents, &initial) {
+            self.message = Some("cancelled".to_string());
+            return Ok(());
+        }
+        let aggregation = parse_aggregation_save_input(&contents, scope)?;
+        aggregation
+            .validate()
+            .context("invalid saved aggregation")?;
+        let path = saved_aggregation_path(&self.paths, &aggregation.id)?;
+        if path.exists() {
+            self.confirm = Some(ConfirmState {
+                prompt: format!("overwrite saved aggregation '{}'? (y/n)", aggregation.id),
+                action: ConfirmAction::OverwriteAggregation { aggregation },
+                input: String::new(),
+                required: None,
+            });
+            return Ok(());
+        }
+        let path = write_saved_aggregation(&self.paths, &aggregation, false)?;
+        self.upsert_aggregation(aggregation);
+        self.message = Some(format!("saved aggregation to {}", path.display()));
+        Ok(())
+    }
+
+    pub(crate) fn edit_inline_query_draft(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<()> {
+        if self.screen != Screen::Documents {
+            return Ok(());
+        }
+        if self.inline_query_draft.is_none() {
+            self.message = Some("no inline query draft".to_string());
+            return Ok(());
+        }
+        let action = PendingEditorAction::RunInlineQuery;
+        let Some(_) = self.ensure_editor_command(action.clone())? else {
+            return Ok(());
+        };
+        self.perform_editor_action(action, terminal)
+    }
+
+    pub(crate) fn edit_inline_aggregation_draft(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<()> {
+        if self.screen != Screen::Documents {
+            return Ok(());
+        }
+        if self.inline_aggregation_draft.is_none() {
+            self.message = Some("no inline aggregation draft".to_string());
+            return Ok(());
+        }
+        let action = PendingEditorAction::RunInlineAggregation;
+        let Some(_) = self.ensure_editor_command(action.clone())? else {
+            return Ok(());
+        };
+        self.perform_editor_action(action, terminal)
+    }
+
+    pub(crate) fn run_inline_query_with_editor(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<()> {
+        let editor = self
+            .editor_command
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("editor command missing"))?;
+        let initial = self
+            .inline_query_draft
+            .as_ref()
+            .map(|draft| draft.raw.clone())
+            .unwrap_or(render_inline_query_template()?);
+        let contents = self.open_editor(terminal, editor, "inline_query", &initial)?;
+        if is_editor_cancelled(&contents, &initial) {
+            self.message = Some("cancelled".to_string());
+            return Ok(());
+        }
+        match parse_inline_query_payload(&contents) {
+            Ok(payload) => {
+                self.inline_query_draft = Some(InlineQueryDraft {
+                    raw: contents,
+                    parsed: Some(payload.clone()),
+                });
+                self.active_inline_draft = Some(InlineDraftKind::Query);
+                self.start_execute_inline_query(payload)?;
+            }
+            Err(error) => {
+                self.inline_query_draft = Some(InlineQueryDraft {
+                    raw: contents,
+                    parsed: None,
+                });
+                self.active_inline_draft = Some(InlineDraftKind::Query);
+                self.message = Some(format!("{} Press e to edit again.", format_error(&error)));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn run_inline_aggregation_with_editor(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<()> {
+        let editor = self
+            .editor_command
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("editor command missing"))?;
+        let initial = self
+            .inline_aggregation_draft
+            .as_ref()
+            .map(|draft| draft.raw.clone())
+            .unwrap_or(render_inline_aggregation_template()?);
+        let contents = self.open_editor(terminal, editor, "inline_aggregation", &initial)?;
+        if is_editor_cancelled(&contents, &initial) {
+            self.message = Some("cancelled".to_string());
+            return Ok(());
+        }
+        match parse_inline_aggregation_payload(&contents) {
+            Ok(payload) => {
+                self.inline_aggregation_draft = Some(InlineAggregationDraft {
+                    raw: contents,
+                    parsed: Some(payload.clone()),
+                });
+                self.active_inline_draft = Some(InlineDraftKind::Aggregation);
+                self.start_execute_inline_aggregation(payload)?;
+            }
+            Err(error) => {
+                self.inline_aggregation_draft = Some(InlineAggregationDraft {
+                    raw: contents,
+                    parsed: None,
+                });
+                self.active_inline_draft = Some(InlineDraftKind::Aggregation);
+                self.message = Some(format!("{} Press e to edit again.", format_error(&error)));
+            }
+        }
         Ok(())
     }
 
@@ -688,12 +952,13 @@ impl App {
         }
 
         self.document_result_source = DocumentResultSource::Collection;
+        self.active_inline_draft = None;
         self.document_page = 0;
         if let Err(error) = self.start_load_documents(None, DocumentLoadReason::Refresh) {
             self.set_error_message(&error);
             return Ok(());
         }
-        self.message = Some("cleared applied saved results".to_string());
+        self.message = Some("cleared applied results".to_string());
         Ok(())
     }
 }
@@ -782,6 +1047,31 @@ mod tests {
     }
 
     #[test]
+    fn save_query_uses_inline_draft_when_available() {
+        let mut app = app_with_document_context();
+        app.inline_query_draft = Some(InlineQueryDraft {
+            raw: "{\"filter\":{}}".to_string(),
+            parsed: Some(InlineQueryPayload {
+                filter: Some("{}".to_string()),
+                projection: None,
+                sort: None,
+                limit: Some(20),
+            }),
+        });
+        let mut terminal = test_terminal();
+
+        app.save_query(&mut terminal).expect("save query");
+
+        assert!(matches!(
+            app.query_save_source,
+            QuerySaveSource::InlineDraft(InlineQueryPayload {
+                limit: Some(20),
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn save_aggregation_enters_scope_selection() {
         let mut app = app_with_document_context();
         app.save_agg_scope_index = None;
@@ -791,6 +1081,65 @@ mod tests {
             .expect("save aggregation");
         assert_eq!(app.screen, Screen::SaveAggregationScopeSelect);
         assert_eq!(app.save_agg_scope_index, Some(0));
+    }
+
+    #[test]
+    fn save_aggregation_uses_inline_draft_when_available() {
+        let mut app = app_with_document_context();
+        app.inline_aggregation_draft = Some(InlineAggregationDraft {
+            raw: "[]".to_string(),
+            parsed: Some(InlineAggregationPayload {
+                pipeline: "[{\"$limit\":20}]".to_string(),
+            }),
+        });
+        let mut terminal = test_terminal();
+
+        app.save_aggregation(&mut terminal)
+            .expect("save aggregation");
+
+        assert!(matches!(
+            app.aggregation_save_source,
+            AggregationSaveSource::InlineDraft(InlineAggregationPayload { .. })
+        ));
+    }
+
+    #[test]
+    fn edit_document_prefers_inline_query_draft_when_active() {
+        let mut app = app_with_document_context();
+        app.active_inline_draft = Some(InlineDraftKind::Query);
+        let mut terminal = test_terminal();
+
+        app.edit_document(&mut terminal).expect("edit");
+
+        assert_eq!(app.message.as_deref(), Some("no inline query draft"));
+    }
+
+    #[test]
+    fn clear_applied_results_keeps_inline_drafts() {
+        let mut app = app_with_document_context();
+        app.document_result_source = DocumentResultSource::InlineQuery;
+        app.active_inline_draft = Some(InlineDraftKind::Query);
+        app.inline_query_draft = Some(InlineQueryDraft {
+            raw: "{\"filter\":{}}".to_string(),
+            parsed: Some(InlineQueryPayload {
+                filter: Some("{}".to_string()),
+                projection: None,
+                sort: None,
+                limit: None,
+            }),
+        });
+
+        app.clear_applied_documents().expect("clear applied");
+
+        assert!(matches!(
+            app.inline_query_draft,
+            Some(InlineQueryDraft {
+                parsed: Some(_),
+                ..
+            })
+        ));
+        assert_eq!(app.active_inline_draft, None);
+        assert_eq!(app.message.as_deref(), Some("cleared applied results"));
     }
 
     #[test]

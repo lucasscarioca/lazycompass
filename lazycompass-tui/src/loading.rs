@@ -87,6 +87,34 @@ impl App {
         Ok(())
     }
 
+    pub(crate) fn start_execute_inline_query(&mut self, payload: InlineQueryPayload) -> Result<()> {
+        let (connection, database, collection) = self.selected_context()?;
+        let spec = lazycompass_mongo::QuerySpec {
+            connection: Some(connection),
+            database,
+            collection,
+            filter: payload.filter,
+            projection: payload.projection,
+            sort: payload.sort,
+            limit: payload.limit,
+        };
+
+        let config = self.storage.config.clone();
+        let request_id = self.next_load_id();
+        self.inline_query_load_id = Some(request_id);
+        self.message = Some("executing inline query...".to_string());
+        let sender = self.load_tx.clone();
+        self.runtime.spawn(async move {
+            let executor = MongoExecutor::new();
+            let result = executor.execute_query(&config, &spec).await;
+            let _ = sender.send(LoadResult::InlineQuery {
+                id: request_id,
+                result,
+            });
+        });
+        Ok(())
+    }
+
     pub(crate) fn start_execute_saved_aggregation(&mut self) -> Result<()> {
         let agg_index = self
             .saved_agg_index
@@ -137,6 +165,34 @@ impl App {
             let _ = sender.send(LoadResult::SavedAggregation {
                 id: request_id,
                 name: saved_name,
+                result,
+            });
+        });
+        Ok(())
+    }
+
+    pub(crate) fn start_execute_inline_aggregation(
+        &mut self,
+        payload: InlineAggregationPayload,
+    ) -> Result<()> {
+        let (connection, database, collection) = self.selected_context()?;
+        let spec = lazycompass_mongo::AggregationSpec {
+            connection: Some(connection),
+            database,
+            collection,
+            pipeline: payload.pipeline,
+        };
+
+        let config = self.storage.config.clone();
+        let request_id = self.next_load_id();
+        self.inline_agg_load_id = Some(request_id);
+        self.message = Some("executing inline aggregation...".to_string());
+        let sender = self.load_tx.clone();
+        self.runtime.spawn(async move {
+            let executor = MongoExecutor::new();
+            let result = executor.execute_aggregation(&config, &spec).await;
+            let _ = sender.send(LoadResult::InlineAggregation {
+                id: request_id,
                 result,
             });
         });

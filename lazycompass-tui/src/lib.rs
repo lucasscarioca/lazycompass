@@ -54,8 +54,11 @@ use errors::format_error;
 use formatting::{connection_label, document_id, document_preview, format_bson, format_document};
 use keymap::{KeyAction, action_for_key, hint_groups, keys_for_actions};
 use payloads::{
-    default_saved_id, parse_aggregation_payload_input, parse_query_payload_input,
-    render_aggregation_payload_template, render_query_payload_template, saved_scope_label,
+    default_saved_id, parse_aggregation_payload_input, parse_aggregation_save_input,
+    parse_inline_aggregation_payload, parse_inline_query_payload, parse_query_payload_input,
+    parse_query_save_input, render_aggregation_payload_template, render_aggregation_save_template,
+    render_inline_aggregation_template, render_inline_query_template,
+    render_query_payload_template, render_query_save_template, saved_scope_label,
 };
 use terminal::{restore_terminal, resume_terminal, setup_terminal, suspend_terminal};
 use theme::{Theme, resolve_theme};
@@ -104,6 +107,49 @@ enum ConfirmAction {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InlineQueryPayload {
+    filter: Option<String>,
+    projection: Option<String>,
+    sort: Option<String>,
+    limit: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InlineAggregationPayload {
+    pipeline: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InlineQueryDraft {
+    raw: String,
+    parsed: Option<InlineQueryPayload>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InlineAggregationDraft {
+    raw: String,
+    parsed: Option<InlineAggregationPayload>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InlineDraftKind {
+    Query,
+    Aggregation,
+}
+
+#[derive(Debug, Clone)]
+enum QuerySaveSource {
+    EmptyTemplate,
+    InlineDraft(InlineQueryPayload),
+}
+
+#[derive(Debug, Clone)]
+enum AggregationSaveSource {
+    EmptyTemplate,
+    InlineDraft(InlineAggregationPayload),
+}
+
 #[derive(Debug, Clone)]
 enum PendingEditorAction {
     Insert {
@@ -122,6 +168,16 @@ enum PendingEditorAction {
     },
     SaveAggregation {
         template: SavedAggregation,
+    },
+    RunInlineQuery,
+    RunInlineAggregation,
+    SaveInlineQuery {
+        scope: SavedScope,
+        draft: InlineQueryPayload,
+    },
+    SaveInlineAggregation {
+        scope: SavedScope,
+        draft: InlineAggregationPayload,
     },
     AddConnection {
         scope: ConnectionPersistenceScope,
@@ -167,6 +223,14 @@ enum LoadResult {
         name: String,
         result: Result<Vec<Document>>,
     },
+    InlineQuery {
+        id: u64,
+        result: Result<Vec<Document>>,
+    },
+    InlineAggregation {
+        id: u64,
+        result: Result<Vec<Document>>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,6 +246,8 @@ enum DocumentResultSource {
     Collection,
     SavedQuery { name: String },
     SavedAggregation { name: String },
+    InlineQuery,
+    InlineAggregation,
 }
 
 struct ListView<'a> {
@@ -225,6 +291,8 @@ struct App {
     document_load_id: Option<u64>,
     saved_query_load_id: Option<u64>,
     saved_agg_load_id: Option<u64>,
+    inline_query_load_id: Option<u64>,
+    inline_agg_load_id: Option<u64>,
     database_state: LoadState,
     collection_state: LoadState,
     document_state: LoadState,
@@ -238,6 +306,11 @@ struct App {
     save_query_scope_index: Option<usize>,
     save_agg_scope_index: Option<usize>,
     add_connection_scope_index: Option<usize>,
+    inline_query_draft: Option<InlineQueryDraft>,
+    inline_aggregation_draft: Option<InlineAggregationDraft>,
+    active_inline_draft: Option<InlineDraftKind>,
+    query_save_source: QuerySaveSource,
+    aggregation_save_source: AggregationSaveSource,
 }
 
 pub fn run(config: Config) -> Result<()> {

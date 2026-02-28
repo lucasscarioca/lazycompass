@@ -15,6 +15,8 @@ pub(crate) enum KeyAction {
     Delete,
     SaveQuery,
     SaveAggregation,
+    RunInlineQuery,
+    RunInlineAggregation,
     RunSavedQuery,
     RunSavedAggregation,
     ClearApplied,
@@ -122,6 +124,26 @@ const KEY_BINDINGS: &[KeyBinding] = &[
         modifiers: KeyModifiers::SHIFT,
     },
     KeyBinding {
+        action: KeyAction::RunInlineQuery,
+        code: KeyCode::Char('R'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::RunInlineQuery,
+        code: KeyCode::Char('R'),
+        modifiers: KeyModifiers::SHIFT,
+    },
+    KeyBinding {
+        action: KeyAction::RunInlineAggregation,
+        code: KeyCode::Char('S'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::RunInlineAggregation,
+        code: KeyCode::Char('S'),
+        modifiers: KeyModifiers::SHIFT,
+    },
+    KeyBinding {
         action: KeyAction::RunSavedQuery,
         code: KeyCode::Char('r'),
         modifiers: KeyModifiers::NONE,
@@ -162,6 +184,7 @@ const HINT_PAGE: &[KeyAction] = &[KeyAction::PreviousPage, KeyAction::NextPage];
 const HINT_EDITING: &[KeyAction] = &[KeyAction::Insert, KeyAction::Edit, KeyAction::Delete];
 const HINT_EDIT_DELETE: &[KeyAction] = &[KeyAction::Edit, KeyAction::Delete];
 const HINT_SAVE: &[KeyAction] = &[KeyAction::SaveQuery, KeyAction::SaveAggregation];
+const HINT_INLINE_RUN: &[KeyAction] = &[KeyAction::RunInlineQuery, KeyAction::RunInlineAggregation];
 const HINT_RUN: &[KeyAction] = &[KeyAction::RunSavedQuery, KeyAction::RunSavedAggregation];
 const HINT_HELP: &[KeyAction] = &[KeyAction::ToggleHelp];
 const HINT_QUIT: &[KeyAction] = &[KeyAction::Quit];
@@ -242,6 +265,10 @@ const DOCUMENT_HINTS: &[HintGroup] = &[
     HintGroup {
         actions: HINT_SAVE,
         label: "save query/agg",
+    },
+    HintGroup {
+        actions: HINT_INLINE_RUN,
+        label: "run inline",
     },
     HintGroup {
         actions: HINT_RUN,
@@ -392,6 +419,8 @@ fn action_keys(action: KeyAction) -> &'static [&'static str] {
         KeyAction::Delete => &["d"],
         KeyAction::SaveQuery => &["Q"],
         KeyAction::SaveAggregation => &["A"],
+        KeyAction::RunInlineQuery => &["R"],
+        KeyAction::RunInlineAggregation => &["S"],
         KeyAction::RunSavedQuery => &["r"],
         KeyAction::RunSavedAggregation => &["a"],
         KeyAction::ClearApplied => &["c"],

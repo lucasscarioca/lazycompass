@@ -57,6 +57,8 @@ impl App {
             document_load_id: None,
             saved_query_load_id: None,
             saved_agg_load_id: None,
+            inline_query_load_id: None,
+            inline_agg_load_id: None,
             database_state: LoadState::Idle,
             collection_state: LoadState::Idle,
             document_state: LoadState::Idle,
@@ -70,6 +72,11 @@ impl App {
             save_query_scope_index: Some(0),
             save_agg_scope_index: Some(0),
             add_connection_scope_index: Some(0),
+            inline_query_draft: None,
+            inline_aggregation_draft: None,
+            active_inline_draft: None,
+            query_save_source: QuerySaveSource::EmptyTemplate,
+            aggregation_save_source: AggregationSaveSource::EmptyTemplate,
         })
     }
 
@@ -157,6 +164,7 @@ impl App {
                 match result {
                     Ok(documents) => {
                         self.documents = documents;
+                        self.active_inline_draft = None;
                         if self.documents.is_empty() && self.document_page > 0 {
                             if self.document_load_reason == DocumentLoadReason::NavigateNext {
                                 self.message = Some("no more documents".to_string());
@@ -212,6 +220,7 @@ impl App {
                         self.document_lines.clear();
                         self.document_scroll = 0;
                         self.document_result_source = DocumentResultSource::SavedQuery { name };
+                        self.active_inline_draft = None;
                         self.screen = Screen::Documents;
                         self.message = Some(format!(
                             "query returned {} document(s)",
@@ -244,6 +253,7 @@ impl App {
                         self.document_scroll = 0;
                         self.document_result_source =
                             DocumentResultSource::SavedAggregation { name };
+                        self.active_inline_draft = None;
                         self.screen = Screen::Documents;
                         self.message = Some(format!(
                             "aggregation returned {} document(s)",
@@ -253,6 +263,68 @@ impl App {
                     Err(error) => {
                         let message = format_error(&error);
                         self.saved_agg_state = LoadState::Failed(message.clone());
+                        self.message = Some(message);
+                    }
+                }
+            }
+            LoadResult::InlineQuery { id, result } => {
+                if self.inline_query_load_id != Some(id) {
+                    return;
+                }
+                self.inline_query_load_id = None;
+                match result {
+                    Ok(documents) => {
+                        self.documents = documents;
+                        self.document_index = if self.documents.is_empty() {
+                            None
+                        } else {
+                            Some(0)
+                        };
+                        self.document_page = 0;
+                        self.document_lines.clear();
+                        self.document_scroll = 0;
+                        self.document_result_source = DocumentResultSource::InlineQuery;
+                        self.active_inline_draft = Some(InlineDraftKind::Query);
+                        self.screen = Screen::Documents;
+                        self.message = Some(format!(
+                            "query returned {} document(s)",
+                            self.documents.len()
+                        ));
+                    }
+                    Err(error) => {
+                        self.active_inline_draft = Some(InlineDraftKind::Query);
+                        let message = format!("{} Press e to edit again.", format_error(&error));
+                        self.message = Some(message);
+                    }
+                }
+            }
+            LoadResult::InlineAggregation { id, result } => {
+                if self.inline_agg_load_id != Some(id) {
+                    return;
+                }
+                self.inline_agg_load_id = None;
+                match result {
+                    Ok(documents) => {
+                        self.documents = documents;
+                        self.document_index = if self.documents.is_empty() {
+                            None
+                        } else {
+                            Some(0)
+                        };
+                        self.document_page = 0;
+                        self.document_lines.clear();
+                        self.document_scroll = 0;
+                        self.document_result_source = DocumentResultSource::InlineAggregation;
+                        self.active_inline_draft = Some(InlineDraftKind::Aggregation);
+                        self.screen = Screen::Documents;
+                        self.message = Some(format!(
+                            "aggregation returned {} document(s)",
+                            self.documents.len()
+                        ));
+                    }
+                    Err(error) => {
+                        self.active_inline_draft = Some(InlineDraftKind::Aggregation);
+                        let message = format!("{} Press e to edit again.", format_error(&error));
                         self.message = Some(message);
                     }
                 }
@@ -338,6 +410,8 @@ impl App {
             KeyAction::Delete => self.request_delete_document()?,
             KeyAction::SaveQuery => self.save_query(terminal)?,
             KeyAction::SaveAggregation => self.save_aggregation(terminal)?,
+            KeyAction::RunInlineQuery => self.run_inline_query(terminal)?,
+            KeyAction::RunInlineAggregation => self.run_inline_aggregation(terminal)?,
             KeyAction::RunSavedQuery => self.run_saved_query()?,
             KeyAction::RunSavedAggregation => self.run_saved_aggregation()?,
             KeyAction::ClearApplied => self.clear_applied_documents()?,
@@ -586,6 +660,47 @@ mod tests {
             DocumentResultSource::SavedQuery { ref name } if name == "recent_orders"
         ));
         assert_eq!(app.message.as_deref(), Some("query returned 1 document(s)"));
+    }
+
+    #[test]
+    fn apply_load_result_updates_inline_query_results() {
+        let mut app = test_app();
+        app.inline_query_load_id = Some(3);
+        app.active_inline_draft = Some(InlineDraftKind::Query);
+
+        app.apply_load_result(LoadResult::InlineQuery {
+            id: 3,
+            result: Ok(vec![Document::from_iter([(
+                "_id".to_string(),
+                Bson::Int32(1),
+            )])]),
+        });
+
+        assert_eq!(app.screen, Screen::Documents);
+        assert_eq!(app.document_index, Some(0));
+        assert_eq!(app.active_inline_draft, Some(InlineDraftKind::Query));
+        assert!(matches!(
+            app.document_result_source,
+            DocumentResultSource::InlineQuery
+        ));
+        assert_eq!(app.message.as_deref(), Some("query returned 1 document(s)"));
+    }
+
+    #[test]
+    fn apply_load_result_keeps_inline_draft_active_on_inline_query_error() {
+        let mut app = test_app();
+        app.inline_query_load_id = Some(4);
+
+        app.apply_load_result(LoadResult::InlineQuery {
+            id: 4,
+            result: Err(anyhow::anyhow!("bad operator")),
+        });
+
+        assert_eq!(app.active_inline_draft, Some(InlineDraftKind::Query));
+        assert_eq!(
+            app.message.as_deref(),
+            Some("bad operator Press e to edit again.")
+        );
     }
 
     #[test]

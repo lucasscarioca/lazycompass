@@ -590,6 +590,12 @@ impl App {
             DocumentResultSource::SavedAggregation { name } => {
                 format!("{base} [saved aggregation: {name}] [c clear applied]")
             }
+            DocumentResultSource::InlineQuery => {
+                format!("{base} [inline query] [e edit draft] [c clear applied]")
+            }
+            DocumentResultSource::InlineAggregation => {
+                format!("{base} [inline aggregation] [e edit draft] [c clear applied]")
+            }
         }
     }
 }
