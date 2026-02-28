@@ -88,7 +88,7 @@ mod tests {
     use anyhow::Result;
     use lazycompass_core::SavedScope;
 
-    use super::parse_scope_from_saved_id;
+    use super::{parse_scope_from_saved_id, validate_saved_id};
 
     #[test]
     fn parse_scope_from_saved_id_supports_multidot_collection() -> Result<()> {
@@ -107,5 +107,27 @@ mod tests {
     fn parse_scope_from_saved_id_rejects_two_segments() {
         let err = parse_scope_from_saved_id("app.users").expect_err("should fail");
         assert!(err.to_string().contains("two segments"));
+    }
+
+    #[test]
+    fn parse_scope_from_saved_id_accepts_shared_name() -> Result<()> {
+        let scope = parse_scope_from_saved_id("recent_orders")?;
+        assert!(matches!(scope, SavedScope::Shared));
+        Ok(())
+    }
+
+    #[test]
+    fn validate_saved_id_rejects_whitespace_and_path_separators() {
+        let err = validate_saved_id(" recent ").expect_err("should reject whitespace");
+        assert!(err.to_string().contains("leading or trailing whitespace"));
+
+        let err = validate_saved_id("app/orders/recent").expect_err("should reject separator");
+        assert!(err.to_string().contains("path separators"));
+    }
+
+    #[test]
+    fn validate_saved_id_rejects_empty_segments() {
+        let err = validate_saved_id("app..recent").expect_err("should reject empty segment");
+        assert!(err.to_string().contains("empty segments"));
     }
 }

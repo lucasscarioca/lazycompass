@@ -159,9 +159,7 @@ impl MongoExecutor {
         let collection = database.collection::<Document>(&spec.collection);
 
         let pipeline = parse_json_pipeline(&spec.pipeline)?;
-        if let Some(stage) = find_pipeline_write_stage(&pipeline) {
-            WriteGuard::from_config(config).ensure_pipeline_allowed(stage)?;
-        }
+        ensure_pipeline_allowed(config, &pipeline)?;
         let options = AggregateOptions::builder()
             .max_time(config.query_timeout())
             .build();
@@ -249,7 +247,7 @@ impl MongoExecutor {
         config: &Config,
         spec: &DocumentInsertSpec,
     ) -> Result<Bson> {
-        WriteGuard::from_config(config).ensure_write_allowed("insert documents")?;
+        ensure_write_allowed(config, "insert documents")?;
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
         let client = connect(config, connection).await?;
         let database = client.database(&spec.database);
@@ -272,7 +270,7 @@ impl MongoExecutor {
         config: &Config,
         spec: &DocumentReplaceSpec,
     ) -> Result<()> {
-        WriteGuard::from_config(config).ensure_write_allowed("replace documents")?;
+        ensure_write_allowed(config, "replace documents")?;
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
         let client = connect(config, connection).await?;
         let database = client.database(&spec.database);
@@ -288,18 +286,12 @@ impl MongoExecutor {
                     spec.database, spec.collection
                 )
             })?;
-        if result.matched_count == 0 {
-            anyhow::bail!(
-                "document not found in {}.{}",
-                spec.database,
-                spec.collection
-            );
-        }
+        ensure_document_matched(result.matched_count, &spec.database, &spec.collection)?;
         Ok(())
     }
 
     pub async fn delete_document(&self, config: &Config, spec: &DocumentDeleteSpec) -> Result<()> {
-        WriteGuard::from_config(config).ensure_write_allowed("delete documents")?;
+        ensure_write_allowed(config, "delete documents")?;
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
         let client = connect(config, connection).await?;
         let database = client.database(&spec.database);
@@ -312,13 +304,7 @@ impl MongoExecutor {
                 spec.database, spec.collection
             )
         })?;
-        if result.deleted_count == 0 {
-            anyhow::bail!(
-                "document not found in {}.{}",
-                spec.database,
-                spec.collection
-            );
-        }
+        ensure_document_deleted(result.deleted_count, &spec.database, &spec.collection)?;
         Ok(())
     }
 }
@@ -342,6 +328,33 @@ fn normalize_json_option(value: Option<String>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+fn ensure_write_allowed(config: &Config, action: &str) -> Result<()> {
+    WriteGuard::from_config(config)
+        .ensure_write_allowed(action)
+        .map_err(Into::into)
+}
+
+fn ensure_pipeline_allowed(config: &Config, pipeline: &[Document]) -> Result<()> {
+    if let Some(stage) = find_pipeline_write_stage(pipeline) {
+        WriteGuard::from_config(config).ensure_pipeline_allowed(stage)?;
+    }
+    Ok(())
+}
+
+fn ensure_document_matched(matched_count: u64, database: &str, collection: &str) -> Result<()> {
+    if matched_count == 0 {
+        anyhow::bail!("document not found in {}.{}", database, collection);
+    }
+    Ok(())
+}
+
+fn ensure_document_deleted(deleted_count: u64, database: &str, collection: &str) -> Result<()> {
+    if deleted_count == 0 {
+        anyhow::bail!("document not found in {}.{}", database, collection);
+    }
+    Ok(())
 }
 
 pub fn parse_json_document(label: &str, value: &str) -> Result<Document> {
@@ -399,6 +412,14 @@ mod tests {
             name: name.to_string(),
             uri: format!("mongodb://{name}:27017"),
             default_database: None,
+        }
+    }
+
+    fn writable_config() -> Config {
+        Config {
+            read_only: Some(false),
+            allow_pipeline_writes: Some(false),
+            ..Config::default()
         }
     }
 
@@ -533,5 +554,57 @@ mod tests {
             bson::doc! { "$merge": { "into": "archive2" } },
         ];
         assert_eq!(find_pipeline_write_stage(&pipeline), Some("$out"));
+    }
+
+    #[test]
+    fn ensure_write_allowed_blocks_read_only_mutations() {
+        let err = ensure_write_allowed(&Config::default(), "insert documents")
+            .expect_err("expected read-only error");
+        assert!(err.to_string().contains("read-only mode"));
+    }
+
+    #[test]
+    fn ensure_pipeline_allowed_blocks_out_without_flag() {
+        let pipeline = vec![bson::doc! { "$out": "archive" }];
+        let err = ensure_pipeline_allowed(&writable_config(), &pipeline)
+            .expect_err("expected pipeline write error");
+        assert!(err.to_string().contains("allow_pipeline_writes"));
+    }
+
+    #[test]
+    fn ensure_pipeline_allowed_blocks_merge_in_read_only() {
+        let pipeline = vec![bson::doc! { "$merge": { "into": "archive" } }];
+        let err = ensure_pipeline_allowed(&Config::default(), &pipeline)
+            .expect_err("expected read-only error");
+        assert!(err.to_string().contains("read-only mode"));
+    }
+
+    #[test]
+    fn ensure_pipeline_allowed_accepts_non_write_pipeline() {
+        let pipeline = vec![bson::doc! { "$match": { "active": true } }];
+        assert!(ensure_pipeline_allowed(&Config::default(), &pipeline).is_ok());
+    }
+
+    #[test]
+    fn ensure_pipeline_allowed_accepts_write_stage_when_enabled() {
+        let config = Config {
+            read_only: Some(false),
+            allow_pipeline_writes: Some(true),
+            ..Config::default()
+        };
+        let pipeline = vec![bson::doc! { "$merge": { "into": "archive" } }];
+        assert!(ensure_pipeline_allowed(&config, &pipeline).is_ok());
+    }
+
+    #[test]
+    fn ensure_document_matched_requires_existing_document() {
+        let err = ensure_document_matched(0, "app", "users").expect_err("expected not found");
+        assert!(err.to_string().contains("document not found in app.users"));
+    }
+
+    #[test]
+    fn ensure_document_deleted_requires_existing_document() {
+        let err = ensure_document_deleted(0, "app", "users").expect_err("expected not found");
+        assert!(err.to_string().contains("document not found in app.users"));
     }
 }

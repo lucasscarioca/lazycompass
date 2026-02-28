@@ -246,3 +246,73 @@ impl App {
             .map(String::as_str)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use lazycompass_core::{Config, ConnectionSpec};
+    use lazycompass_storage::StorageSnapshot;
+
+    use super::*;
+
+    fn app_with_context() -> App {
+        let storage = StorageSnapshot {
+            config: Config {
+                connections: vec![ConnectionSpec {
+                    name: "local".to_string(),
+                    uri: "mongodb://localhost:27017".to_string(),
+                    default_database: Some("app".to_string()),
+                }],
+                read_only: Some(false),
+                ..Config::default()
+            },
+            queries: Vec::new(),
+            aggregations: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let mut app = App::test_app_with_storage(storage);
+        app.connection_index = Some(0);
+        app.database_items = vec!["app".to_string()];
+        app.database_index = Some(0);
+        app.collection_items = vec!["users".to_string()];
+        app.collection_index = Some(0);
+        app
+    }
+
+    #[test]
+    fn start_load_documents_resets_document_state() {
+        let mut app = app_with_context();
+        app.documents = vec![Document::from_iter([("_id".to_string(), Bson::Int32(1))])];
+        app.document_index = Some(0);
+        app.document_lines = vec!["old".to_string()];
+        app.document_scroll = 4;
+        app.message = Some("stale".to_string());
+
+        app.start_load_documents(Some(2), DocumentLoadReason::Refresh)
+            .expect("start load");
+
+        assert!(app.document_load_id.is_some());
+        assert!(matches!(app.document_state, LoadState::Loading));
+        assert!(app.documents.is_empty());
+        assert_eq!(app.document_index, None);
+        assert!(app.document_lines.is_empty());
+        assert_eq!(app.document_scroll, 0);
+        assert_eq!(app.document_pending_index, Some(2));
+        assert_eq!(app.message, None);
+    }
+
+    #[test]
+    fn start_load_collections_resets_collection_state() {
+        let mut app = app_with_context();
+        app.collection_items = vec!["old".to_string()];
+        app.collection_index = Some(0);
+        app.message = Some("stale".to_string());
+
+        app.start_load_collections().expect("start collections");
+
+        assert!(app.collection_load_id.is_some());
+        assert!(matches!(app.collection_state, LoadState::Loading));
+        assert!(app.collection_items.is_empty());
+        assert_eq!(app.collection_index, None);
+        assert_eq!(app.message, None);
+    }
+}

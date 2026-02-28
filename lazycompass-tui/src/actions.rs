@@ -697,3 +697,152 @@ impl App {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use lazycompass_core::{Config, ConnectionSpec, SavedAggregation, SavedQuery, SavedScope};
+    use lazycompass_storage::StorageSnapshot;
+
+    use super::*;
+
+    fn storage_with_context() -> StorageSnapshot {
+        StorageSnapshot {
+            config: Config {
+                connections: vec![ConnectionSpec {
+                    name: "local".to_string(),
+                    uri: "mongodb://localhost:27017".to_string(),
+                    default_database: Some("app".to_string()),
+                }],
+                read_only: Some(false),
+                ..Config::default()
+            },
+            queries: Vec::new(),
+            aggregations: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn app_with_document_context() -> App {
+        let mut app = App::test_app_with_storage(storage_with_context());
+        app.screen = Screen::Documents;
+        app.connection_index = Some(0);
+        app.database_items = vec!["app".to_string()];
+        app.database_index = Some(0);
+        app.collection_items = vec!["users".to_string()];
+        app.collection_index = Some(0);
+        app.documents = vec![Document::from_iter([
+            ("_id".to_string(), Bson::String("user-1".to_string())),
+            (
+                "email".to_string(),
+                Bson::String("a@example.com".to_string()),
+            ),
+        ])];
+        app.document_index = Some(0);
+        app
+    }
+
+    #[test]
+    fn request_delete_document_sets_confirm_prompt() {
+        let mut app = app_with_document_context();
+        app.request_delete_document().expect("request delete");
+
+        match app.confirm {
+            Some(ConfirmState {
+                required: Some("delete"),
+                ..
+            }) => {}
+            _ => panic!("expected delete confirmation"),
+        }
+    }
+
+    #[test]
+    fn request_delete_document_is_blocked_in_read_only_mode() {
+        let mut storage = storage_with_context();
+        storage.config.read_only = Some(true);
+        let mut app = App::test_app_with_storage(storage);
+        app.screen = Screen::Documents;
+
+        app.request_delete_document().expect("delete request");
+        assert!(app.confirm.is_none());
+        assert_eq!(
+            app.message.as_deref(),
+            Some("read-only mode: delete documents is disabled")
+        );
+    }
+
+    #[test]
+    fn save_query_enters_scope_selection() {
+        let mut app = app_with_document_context();
+        app.save_query_scope_index = None;
+        let mut terminal = test_terminal();
+
+        app.save_query(&mut terminal).expect("save query");
+        assert_eq!(app.screen, Screen::SaveQueryScopeSelect);
+        assert_eq!(app.save_query_scope_index, Some(0));
+    }
+
+    #[test]
+    fn save_aggregation_enters_scope_selection() {
+        let mut app = app_with_document_context();
+        app.save_agg_scope_index = None;
+        let mut terminal = test_terminal();
+
+        app.save_aggregation(&mut terminal)
+            .expect("save aggregation");
+        assert_eq!(app.screen, Screen::SaveAggregationScopeSelect);
+        assert_eq!(app.save_agg_scope_index, Some(0));
+    }
+
+    #[test]
+    fn run_saved_query_handles_empty_and_present_queries() {
+        let mut app = app_with_document_context();
+        app.run_saved_query().expect("run saved query");
+        assert_eq!(app.message.as_deref(), Some("no saved queries"));
+
+        app.storage.queries.push(SavedQuery {
+            id: "recent_orders".to_string(),
+            scope: SavedScope::Shared,
+            filter: None,
+            projection: None,
+            sort: None,
+            limit: None,
+        });
+        app.message = None;
+        app.run_saved_query().expect("run saved query");
+        assert_eq!(app.screen, Screen::SavedQuerySelect);
+        assert_eq!(app.saved_query_index, Some(0));
+    }
+
+    #[test]
+    fn run_saved_aggregation_handles_empty_and_present_aggs() {
+        let mut app = app_with_document_context();
+        app.run_saved_aggregation().expect("run saved agg");
+        assert_eq!(app.message.as_deref(), Some("no saved aggregations"));
+
+        app.storage.aggregations.push(SavedAggregation {
+            id: "orders_by_user".to_string(),
+            scope: SavedScope::Shared,
+            pipeline: "[]".to_string(),
+        });
+        app.message = None;
+        app.run_saved_aggregation().expect("run saved agg");
+        assert_eq!(app.screen, Screen::SavedAggregationSelect);
+        assert_eq!(app.saved_agg_index, Some(0));
+    }
+
+    #[test]
+    fn start_add_connection_only_works_on_connections_screen() {
+        let mut app = app_with_document_context();
+        app.start_add_connection().expect("start add connection");
+        assert_ne!(app.screen, Screen::AddConnectionScopeSelect);
+
+        app.screen = Screen::Connections;
+        app.start_add_connection().expect("start add connection");
+        assert_eq!(app.screen, Screen::AddConnectionScopeSelect);
+        assert_eq!(app.add_connection_scope_index, Some(0));
+    }
+
+    fn test_terminal() -> Terminal<CrosstermBackend<Stdout>> {
+        Terminal::new(CrosstermBackend::new(stdout())).expect("terminal")
+    }
+}

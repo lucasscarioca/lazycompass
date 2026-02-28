@@ -503,34 +503,35 @@ impl App {
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use lazycompass_core::Config;
+    use lazycompass_core::{Config, ConnectionSpec};
     use lazycompass_storage::StorageSnapshot;
-    use std::fs;
-    use std::path::PathBuf;
-
-    fn temp_dir(prefix: &str) -> PathBuf {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("lazycompass_tui_loop_{prefix}_{nonce}"));
-        fs::create_dir_all(&path).expect("create temp dir");
-        path
-    }
 
     fn test_app() -> App {
-        let root = temp_dir("app");
-        let paths = ConfigPaths {
-            global_root: root.join("global"),
-            repo_root: None,
-        };
+        App::test_app()
+    }
+
+    fn app_with_document_context() -> App {
         let storage = StorageSnapshot {
-            config: Config::default(),
+            config: Config {
+                connections: vec![ConnectionSpec {
+                    name: "local".to_string(),
+                    uri: "mongodb://localhost:27017".to_string(),
+                    default_database: Some("app".to_string()),
+                }],
+                read_only: Some(false),
+                ..Config::default()
+            },
             queries: Vec::new(),
             aggregations: Vec::new(),
             warnings: Vec::new(),
         };
-        App::new(paths, storage, false).expect("build app")
+        let mut app = App::test_app_with_storage(storage);
+        app.connection_index = Some(0);
+        app.database_items = vec!["app".to_string()];
+        app.database_index = Some(0);
+        app.collection_items = vec!["users".to_string()];
+        app.collection_index = Some(0);
+        app
     }
 
     #[test]
@@ -561,5 +562,66 @@ mod tests {
         assert_eq!(app.database_load_id, Some(2));
         assert_eq!(app.database_items, vec!["kept".to_string()]);
         assert!(matches!(app.database_state, LoadState::Loading));
+    }
+
+    #[test]
+    fn apply_load_result_updates_saved_query_results() {
+        let mut app = test_app();
+        app.saved_query_load_id = Some(1);
+        app.screen = Screen::SavedQuerySelect;
+
+        app.apply_load_result(LoadResult::SavedQuery {
+            id: 1,
+            name: "recent_orders".to_string(),
+            result: Ok(vec![Document::from_iter([(
+                "_id".to_string(),
+                Bson::Int32(1),
+            )])]),
+        });
+
+        assert_eq!(app.screen, Screen::Documents);
+        assert_eq!(app.document_index, Some(0));
+        assert!(matches!(
+            app.document_result_source,
+            DocumentResultSource::SavedQuery { ref name } if name == "recent_orders"
+        ));
+        assert_eq!(app.message.as_deref(), Some("query returned 1 document(s)"));
+    }
+
+    #[test]
+    fn apply_load_result_records_document_load_errors() {
+        let mut app = test_app();
+        app.document_load_id = Some(7);
+        app.document_state = LoadState::Loading;
+
+        app.apply_load_result(LoadResult::Documents {
+            id: 7,
+            result: Err(anyhow::anyhow!("boom")),
+        });
+
+        assert!(matches!(app.document_state, LoadState::Failed(_)));
+        assert_eq!(app.message.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn apply_load_result_reloads_previous_page_when_next_page_is_empty() {
+        let mut app = app_with_document_context();
+        app.document_load_id = Some(9);
+        app.document_state = LoadState::Loading;
+        app.document_page = 2;
+        app.document_load_reason = DocumentLoadReason::NavigateNext;
+        app.document_pending_index = Some(3);
+
+        app.apply_load_result(LoadResult::Documents {
+            id: 9,
+            result: Ok(Vec::new()),
+        });
+
+        assert_eq!(app.document_page, 1);
+        assert_ne!(app.document_load_id, Some(9));
+        assert!(app.document_load_id.is_some());
+        assert!(matches!(app.document_state, LoadState::Loading));
+        assert_eq!(app.document_pending_index, Some(3));
+        assert_eq!(app.message, None);
     }
 }

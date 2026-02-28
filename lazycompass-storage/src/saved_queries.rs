@@ -270,4 +270,75 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         Ok(())
     }
+
+    #[test]
+    fn write_saved_query_rejects_scope_mismatch() -> Result<()> {
+        let root = temp_root("write_saved_query_scope_mismatch");
+        let paths = ConfigPaths {
+            global_root: root.join("global"),
+            repo_root: Some(root.join("repo")),
+        };
+        let query = SavedQuery {
+            id: "shared_name".to_string(),
+            scope: SavedScope::Scoped {
+                database: "app".to_string(),
+                collection: "users".to_string(),
+            },
+            filter: None,
+            projection: None,
+            sort: None,
+            limit: None,
+        };
+
+        let err = write_saved_query(&paths, &query, false).expect_err("expected mismatch");
+        assert!(err.to_string().contains("does not match its scope"));
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn write_saved_query_rejects_invalid_filter_json() -> Result<()> {
+        let root = temp_root("write_saved_query_invalid_json");
+        let paths = ConfigPaths {
+            global_root: root.join("global"),
+            repo_root: Some(root.join("repo")),
+        };
+        let query = SavedQuery {
+            id: "recent_orders".to_string(),
+            scope: SavedScope::Shared,
+            filter: Some("{invalid".to_string()),
+            projection: None,
+            sort: None,
+            limit: None,
+        };
+
+        let err = write_saved_query(&paths, &query, false).expect_err("expected invalid json");
+        assert!(
+            err.to_string()
+                .contains("saved query filter must be valid JSON")
+        );
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn write_saved_query_requires_repo_context() {
+        let query = SavedQuery {
+            id: "recent_orders".to_string(),
+            scope: SavedScope::Shared,
+            filter: None,
+            projection: None,
+            sort: None,
+            limit: None,
+        };
+        let paths = ConfigPaths {
+            global_root: std::env::temp_dir(),
+            repo_root: None,
+        };
+
+        let err = write_saved_query(&paths, &query, false).expect_err("expected repo error");
+        assert!(err.to_string().contains("repository config not found"));
+    }
 }

@@ -431,4 +431,201 @@ uri = "mongodb://two"
         let _ = fs::remove_dir_all(&root);
         Ok(())
     }
+
+    #[test]
+    fn load_config_rejects_empty_connection_name() -> Result<()> {
+        let root = temp_root("config_empty_name");
+        let global_root = root.join("global");
+
+        write_file(
+            &global_root.join("config.toml"),
+            r#"[[connections]]
+name = " "
+uri = "mongodb://localhost:27017"
+"#,
+        );
+
+        let paths = ConfigPaths {
+            global_root,
+            repo_root: None,
+        };
+        let err = load_config(&paths).expect_err("expected empty name");
+        assert!(err.to_string().contains("invalid"));
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn load_config_rejects_empty_connection_uri() -> Result<()> {
+        let root = temp_root("config_empty_uri");
+        let global_root = root.join("global");
+
+        write_file(
+            &global_root.join("config.toml"),
+            r#"[[connections]]
+name = "local"
+uri = " "
+"#,
+        );
+
+        let paths = ConfigPaths {
+            global_root,
+            repo_root: None,
+        };
+        let err = load_config(&paths).expect_err("expected empty uri");
+        assert!(err.to_string().contains("invalid"));
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn load_config_rejects_zero_numeric_settings() -> Result<()> {
+        let root = temp_root("config_zero_numbers");
+        let global_root = root.join("global");
+
+        write_file(
+            &global_root.join("config.toml"),
+            r#"[timeouts]
+connect_ms = 0
+query_ms = 1
+
+[logging]
+max_size_mb = 1
+max_backups = 1
+"#,
+        );
+        let err = load_config(&ConfigPaths {
+            global_root: global_root.clone(),
+            repo_root: None,
+        })
+        .expect_err("expected zero connect timeout");
+        assert!(err.to_string().contains("invalid"));
+
+        write_file(
+            &global_root.join("config.toml"),
+            r#"[timeouts]
+connect_ms = 1
+query_ms = 0
+
+[logging]
+max_size_mb = 1
+max_backups = 1
+"#,
+        );
+        let err = load_config(&ConfigPaths {
+            global_root: global_root.clone(),
+            repo_root: None,
+        })
+        .expect_err("expected zero query timeout");
+        assert!(err.to_string().contains("invalid"));
+
+        write_file(
+            &global_root.join("config.toml"),
+            r#"[timeouts]
+connect_ms = 1
+query_ms = 1
+
+[logging]
+max_size_mb = 0
+max_backups = 1
+"#,
+        );
+        let err = load_config(&ConfigPaths {
+            global_root: global_root.clone(),
+            repo_root: None,
+        })
+        .expect_err("expected zero max size");
+        assert!(err.to_string().contains("invalid"));
+
+        write_file(
+            &global_root.join("config.toml"),
+            r#"[timeouts]
+connect_ms = 1
+query_ms = 1
+
+[logging]
+max_size_mb = 1
+max_backups = 0
+"#,
+        );
+        let err = load_config(&ConfigPaths {
+            global_root,
+            repo_root: None,
+        })
+        .expect_err("expected zero backups");
+        assert!(err.to_string().contains("invalid"));
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn load_config_reads_repo_dotenv_from_repo_root() -> Result<()> {
+        let root = temp_root("config_repo_dotenv");
+        let repo_root = root.join("repo");
+        let suffix = unique_env_suffix();
+        let var_name = format!("LAZYCOMPASS_REPO_DOTENV_{suffix}");
+
+        write_file(
+            &repo_root.join(".env"),
+            &format!("{var_name}=mongodb://repo-from-dotenv\n"),
+        );
+        write_file(
+            &repo_root.join(".lazycompass/config.toml"),
+            &format!(
+                r#"[[connections]]
+name = "repo"
+uri = "${{{var_name}}}"
+"#
+            ),
+        );
+
+        let config = load_config(&ConfigPaths {
+            global_root: root.join("global"),
+            repo_root: Some(repo_root),
+        })?;
+        assert_eq!(config.connections[0].uri, "mongodb://repo-from-dotenv");
+
+        unsafe {
+            std::env::remove_var(&var_name);
+        }
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn load_config_reads_global_dotenv_from_global_dir() -> Result<()> {
+        let root = temp_root("config_global_dotenv");
+        let global_root = root.join("global");
+        let suffix = unique_env_suffix();
+        let var_name = format!("LAZYCOMPASS_GLOBAL_DOTENV_{suffix}");
+
+        write_file(
+            &global_root.join(".env"),
+            &format!("{var_name}=mongodb://global-from-dotenv\n"),
+        );
+        write_file(
+            &global_root.join("config.toml"),
+            &format!(
+                r#"[[connections]]
+name = "global"
+uri = "${{{var_name}}}"
+"#
+            ),
+        );
+
+        let config = load_config(&ConfigPaths {
+            global_root,
+            repo_root: None,
+        })?;
+        assert_eq!(config.connections[0].uri, "mongodb://global-from-dotenv");
+
+        unsafe {
+            std::env::remove_var(&var_name);
+        }
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
 }

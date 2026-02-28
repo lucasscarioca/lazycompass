@@ -653,6 +653,53 @@ mod tests {
     }
 
     #[test]
+    fn connection_security_treats_tls_and_auth_query_params_as_secure() {
+        let config = Config {
+            connections: vec![ConnectionSpec {
+                name: "atlas".to_string(),
+                uri: "mongodb://localhost:27017/?tls=true&authMechanism=SCRAM-SHA-256".to_string(),
+                default_database: None,
+            }],
+            ..Config::default()
+        };
+
+        let warnings = connection_security_warnings(&config);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn connection_security_ssl_false_overrides_srv_default() {
+        let config = Config {
+            connections: vec![ConnectionSpec {
+                name: "srv".to_string(),
+                uri: "mongodb+srv://user@cluster.example.mongodb.net/?ssl=false".to_string(),
+                default_database: None,
+            }],
+            ..Config::default()
+        };
+
+        let warnings = connection_security_warnings(&config);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("TLS"));
+    }
+
+    #[test]
+    fn connection_security_reports_missing_auth_when_tls_only() {
+        let config = Config {
+            connections: vec![ConnectionSpec {
+                name: "tls_only".to_string(),
+                uri: "mongodb://localhost:27017/?tls=true".to_string(),
+                default_database: None,
+            }],
+            ..Config::default()
+        };
+
+        let warnings = connection_security_warnings(&config);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("authentication"));
+    }
+
+    #[test]
     fn default_timeouts_are_applied() {
         let config = Config::default();
         assert_eq!(

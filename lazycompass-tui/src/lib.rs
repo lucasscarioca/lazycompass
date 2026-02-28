@@ -252,3 +252,37 @@ pub fn run(config: Config) -> Result<()> {
     restore_terminal(&mut terminal)?;
     result
 }
+
+#[cfg(test)]
+impl App {
+    pub(crate) fn test_app() -> Self {
+        Self::test_app_with_storage(StorageSnapshot {
+            config: Config::default(),
+            queries: Vec::new(),
+            aggregations: Vec::new(),
+            warnings: Vec::new(),
+        })
+    }
+
+    pub(crate) fn test_app_with_storage(storage: StorageSnapshot) -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "lazycompass_tui_test_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create temp root");
+        let read_only = storage.config.read_only();
+        Self::new(
+            ConfigPaths {
+                global_root: root.join("global"),
+                repo_root: None,
+            },
+            storage,
+            read_only,
+        )
+        .expect("build app")
+    }
+}

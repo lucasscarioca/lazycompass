@@ -178,4 +178,77 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         Ok(())
     }
+
+    #[test]
+    fn load_saved_aggregations_warns_on_invalid_payload() -> Result<()> {
+        let root = temp_root("saved_aggs_invalid");
+        let repo_root = root.join("repo");
+
+        write_file(
+            &repo_root.join(".lazycompass/aggregations/orders_by_user.json"),
+            r#"{"$group":{"_id":"$userId"}}"#,
+        );
+
+        let paths = ConfigPaths {
+            global_root: root.join("global"),
+            repo_root: Some(repo_root),
+        };
+        let (aggregations, warnings) = load_saved_aggregations(&paths)?;
+
+        assert!(aggregations.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("skipping saved aggregation"));
+        assert!(warnings[0].contains("orders_by_user.json"));
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn write_saved_aggregation_rejects_scope_mismatch() -> Result<()> {
+        let root = temp_root("write_saved_aggregation_scope");
+        let paths = ConfigPaths {
+            global_root: root.join("global"),
+            repo_root: Some(root.join("repo")),
+        };
+        let aggregation = SavedAggregation {
+            id: "orders_by_user".to_string(),
+            scope: SavedScope::Scoped {
+                database: "app".to_string(),
+                collection: "orders".to_string(),
+            },
+            pipeline: "[]".to_string(),
+        };
+
+        let err =
+            write_saved_aggregation(&paths, &aggregation, false).expect_err("expected mismatch");
+        assert!(err.to_string().contains("does not match its scope"));
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn write_saved_aggregation_rejects_invalid_pipeline_json() -> Result<()> {
+        let root = temp_root("write_saved_aggregation_invalid");
+        let paths = ConfigPaths {
+            global_root: root.join("global"),
+            repo_root: Some(root.join("repo")),
+        };
+        let aggregation = SavedAggregation {
+            id: "orders_by_user".to_string(),
+            scope: SavedScope::Shared,
+            pipeline: "{invalid".to_string(),
+        };
+
+        let err = write_saved_aggregation(&paths, &aggregation, false)
+            .expect_err("expected invalid pipeline");
+        assert!(
+            err.to_string()
+                .contains("saved aggregation pipeline must be valid JSON")
+        );
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
 }
