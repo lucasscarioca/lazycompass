@@ -222,35 +222,50 @@ pub fn connection_security_warnings(config: &Config) -> Vec<String> {
 
     let mut warnings = Vec::new();
     for connection in &config.connections {
-        let security = connection_security(&connection.uri);
-        let missing = match (security.tls, security.auth) {
-            (false, false) => Some("TLS and authentication"),
-            (false, true) => Some("TLS"),
-            (true, false) => Some("authentication"),
-            (true, true) => None,
-        };
-        let Some(missing) = missing else {
+        let Some(details) = insecure_connection_details(&connection.uri) else {
             continue;
         };
         let redacted_uri = redact_connection_uri(&connection.uri);
         warnings.push(format!(
-            "connection '{}' is missing {missing}; set allow_insecure=true to silence (uri: {redacted_uri})",
-            connection.name
+            "connection '{}' is insecure ({details}); set allow_insecure=true to permit it (uri: {redacted_uri})",
+            connection.name,
         ));
     }
     warnings
+}
+
+pub fn ensure_connection_security(
+    config: &Config,
+    connection: &ConnectionSpec,
+) -> Result<(), String> {
+    if config.allow_insecure() {
+        return Ok(());
+    }
+
+    let Some(details) = insecure_connection_details(&connection.uri) else {
+        return Ok(());
+    };
+    let redacted_uri = redact_connection_uri(&connection.uri);
+    Err(format!(
+        "connection '{}' is insecure ({details}); rerun with --allow-insecure to permit it (uri: {redacted_uri})",
+        connection.name
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ConnectionSecurity {
     tls: bool,
     auth: bool,
+    invalid_certificates: bool,
+    invalid_hostnames: bool,
 }
 
 fn connection_security(uri: &str) -> ConnectionSecurity {
     let mut tls = uri.starts_with("mongodb+srv://");
     let mut auth = uri_has_userinfo(uri);
     let mut tls_override = None;
+    let mut invalid_certificates = false;
+    let mut invalid_hostnames = false;
 
     for (key, value) in mongo_uri_query_params(uri) {
         let key = key.to_ascii_lowercase();
@@ -262,13 +277,48 @@ fn connection_security(uri: &str) -> ConnectionSecurity {
         if key == "authmechanism" && !value.trim().is_empty() {
             auth = true;
         }
+        if key == "tlsallowinvalidcertificates" {
+            invalid_certificates = parse_bool(value).unwrap_or(false);
+        }
+        if key == "tlsallowinvalidhostnames" {
+            invalid_hostnames = parse_bool(value).unwrap_or(false);
+        }
     }
 
     if let Some(tls_override) = tls_override {
         tls = tls_override;
     }
 
-    ConnectionSecurity { tls, auth }
+    ConnectionSecurity {
+        tls,
+        auth,
+        invalid_certificates,
+        invalid_hostnames,
+    }
+}
+
+fn insecure_connection_details(uri: &str) -> Option<String> {
+    let security = connection_security(uri);
+    let mut issues = Vec::new();
+
+    match (security.tls, security.auth) {
+        (false, false) => issues.push("missing TLS and authentication"),
+        (false, true) => issues.push("missing TLS"),
+        (true, false) => issues.push("missing authentication"),
+        (true, true) => {}
+    }
+    if security.invalid_certificates {
+        issues.push("allows invalid TLS certificates");
+    }
+    if security.invalid_hostnames {
+        issues.push("allows invalid TLS hostnames");
+    }
+
+    if issues.is_empty() {
+        None
+    } else {
+        Some(issues.join(", "))
+    }
 }
 
 fn uri_has_userinfo(uri: &str) -> bool {
@@ -617,7 +667,7 @@ mod tests {
 
         let warnings = connection_security_warnings(&config);
         assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("TLS and authentication"));
+        assert!(warnings[0].contains("missing TLS and authentication"));
     }
 
     #[test]
@@ -666,7 +716,7 @@ mod tests {
 
         let warnings = connection_security_warnings(&config);
         assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("TLS"));
+        assert!(warnings[0].contains("missing TLS"));
     }
 
     #[test]
@@ -682,7 +732,37 @@ mod tests {
 
         let warnings = connection_security_warnings(&config);
         assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("authentication"));
+        assert!(warnings[0].contains("missing authentication"));
+    }
+
+    #[test]
+    fn connection_security_reports_invalid_tls_options() {
+        let config = Config {
+            connections: vec![ConnectionSpec {
+                name: "weak_tls".to_string(),
+                uri: "mongodb://user@localhost:27017/?tls=true&tlsAllowInvalidCertificates=true&tlsAllowInvalidHostnames=true".to_string(),
+                default_database: None,
+            }],
+            ..Config::default()
+        };
+
+        let warnings = connection_security_warnings(&config);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("invalid TLS certificates"));
+        assert!(warnings[0].contains("invalid TLS hostnames"));
+    }
+
+    #[test]
+    fn ensure_connection_security_blocks_insecure_connections() {
+        let config = Config::default();
+        let connection = ConnectionSpec {
+            name: "local".to_string(),
+            uri: "mongodb://localhost:27017".to_string(),
+            default_database: None,
+        };
+
+        let err = ensure_connection_security(&config, &connection).expect_err("expected block");
+        assert!(err.contains("--allow-insecure"));
     }
 
     #[test]

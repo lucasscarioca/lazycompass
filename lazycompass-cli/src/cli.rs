@@ -29,7 +29,7 @@ pub(crate) struct Cli {
     #[arg(
         long,
         global = true,
-        help = "Silence warnings for connections without TLS or authentication"
+        help = "Permit insecure Mongo connections for this run"
     )]
     pub(crate) allow_insecure: bool,
 }

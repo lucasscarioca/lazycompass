@@ -2,7 +2,9 @@ pub use mongodb::bson::{Bson, Document};
 
 use anyhow::{Context, Result};
 use futures::TryStreamExt;
-use lazycompass_core::{Config, ConnectionSpec, WriteGuard, redact_connection_uri};
+use lazycompass_core::{
+    Config, ConnectionSpec, WriteGuard, ensure_connection_security, redact_connection_uri,
+};
 use mongodb::{
     Client, bson,
     options::{AggregateOptions, ClientOptions, FindOptions},
@@ -352,6 +354,7 @@ impl MongoExecutor {
 
 async fn connect(config: &Config, connection: &ConnectionSpec) -> Result<Client> {
     let redacted_uri = redact_connection_uri(&connection.uri);
+    ensure_connection_security(config, connection).map_err(|error| anyhow::anyhow!("{error}"))?;
     let mut options = ClientOptions::parse(&connection.uri)
         .await
         .with_context(|| format!("unable to parse connection options for {redacted_uri}"))?;

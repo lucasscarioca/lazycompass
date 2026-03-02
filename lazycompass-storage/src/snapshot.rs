@@ -121,7 +121,7 @@ mod tests {
         let storage = load_storage_with_config(&paths, config).expect("load storage");
 
         assert!(storage.warnings.iter().any(|warning| {
-            warning.contains("connection 'insecure' is missing TLS and authentication")
+            warning.contains("connection 'insecure' is insecure (missing TLS and authentication)")
         }));
         assert!(
             storage

@@ -11,6 +11,7 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 - Security: harden storage writes against symlink traversal and non-atomic saves; isolate repo/global `.env` resolution; require secure temp files for CLI edit flows.
 - Security: harden upgrade/install to stop consulting cwd installer scripts, restrict installer downloads to GitHub raw repo paths, and require release checksums during install.
 - Security: cap query/aggregation result sets at 10,000 documents and neutralize CSV formula cells during export/copy.
+- Security: reject insecure Mongo connections by default at runtime unless `--allow-insecure` is set, and avoid full TUI rendering for oversized documents/indexes.
 - Config: restrict `logging.file` to paths under the global config directory.
 
 ## [0.9.0] - 2026-03-02

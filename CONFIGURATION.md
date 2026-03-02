@@ -38,9 +38,9 @@ Write controls:
 - Writes are disabled by default on every run.
 - Use `--dangerously-enable-write` or `--yolo` to enable write actions for the current CLI/TUI session.
 - Use `--allow-pipeline-writes` with `--dangerously-enable-write` to allow `$out`/`$merge` for the current run.
-- `allow_insecure` silences warnings for connections missing TLS or authentication.
+- `allow_insecure` permits insecure connections for the current config/run.
 - Config files cannot enable writes. `read_only` and `allow_pipeline_writes` are rejected if present.
-- Runtime override: `--allow-insecure` silences TLS/auth warnings for the run.
+- Runtime override: `--allow-insecure` permits insecure connections for the run.
 
 File permissions (Unix):
 

@@ -97,6 +97,7 @@ Env var naming:
 - `.env` is auto-loaded from repo root for repo config and from `~/.config/lazycompass/.env` for global config.
 - Real environment variables take precedence over `.env` values.
 - Query and aggregation execution stops after 10,000 result documents; narrow the scope or add `--limit` for large result sets.
+- Insecure Mongo connections are rejected by default; use `--allow-insecure` only for explicit local/trusted exceptions.
 
 Write actions open your `$VISUAL` or `$EDITOR` for JSON editing (command + args only; no shell expansion).
 
