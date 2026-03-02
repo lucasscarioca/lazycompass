@@ -26,10 +26,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             exit 0
           fi
-          gh release create "$RELEASE_TAG" --title "$RELEASE_TAG" --notes ""
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --notes ""
 
   build:
     name: build (${{ matrix.target }})
