@@ -7,6 +7,7 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 ## [Unreleased]
 
 - Docs: harden cross-links between markdown files, retarget stale repo guidance to existing docs, and sync the playground QA guide with current write-safety behavior.
+- CLI: expand `--help` output with clearer command summaries, safer flag descriptions, and compact examples for both users and agents.
 
 ## [0.9.0] - 2026-03-02
 
