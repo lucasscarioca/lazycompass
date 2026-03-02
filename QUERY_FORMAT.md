@@ -76,4 +76,4 @@ Example:
 
 ## Pipeline write safety
 
-Pipelines containing `$out` or `$merge` are blocked by default. Set `allow_pipeline_writes = true` and disable `read_only` to run them.
+Pipelines containing `$out` or `$merge` are blocked by default. Rerun with `--dangerously-enable-write --allow-pipeline-writes` to allow them.

@@ -215,7 +215,7 @@ mod tests {
         fs::create_dir_all(&global_root)?;
         fs::set_permissions(&global_root, fs::Permissions::from_mode(0o755))?;
         let global_config = global_root.join("config.toml");
-        write_file(&global_config, "read_only = true\n");
+        write_file(&global_config, "[logging]\nlevel = \"info\"\n");
         fs::set_permissions(&global_config, fs::Permissions::from_mode(0o644))?;
 
         let repo_root = root.join("repo");
@@ -263,7 +263,7 @@ mod tests {
         fs::create_dir_all(&global_root)?;
         fs::set_permissions(&global_root, fs::Permissions::from_mode(0o755))?;
         let global_config = global_root.join("config.toml");
-        write_file(&global_config, "read_only = true\n");
+        write_file(&global_config, "[logging]\nlevel = \"info\"\n");
         fs::set_permissions(&global_config, fs::Permissions::from_mode(0o644))?;
 
         let repo_root = root.join("repo");

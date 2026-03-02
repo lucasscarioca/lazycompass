@@ -1,8 +1,12 @@
 use super::*;
 
 impl App {
-    pub(crate) fn block_if_read_only(&mut self, action: &str) -> bool {
-        let guard = WriteGuard::new(self.read_only, self.storage.config.allow_pipeline_writes());
+    pub(crate) fn write_guard(&self) -> WriteGuard {
+        WriteGuard::new(self.write_enabled, self.allow_pipeline_writes)
+    }
+
+    pub(crate) fn block_if_write_disabled(&mut self, action: &str) -> bool {
+        let guard = self.write_guard();
         if let Err(error) = guard.ensure_write_allowed(action) {
             self.message = Some(error.to_string());
             return true;
@@ -25,7 +29,7 @@ impl App {
         if !matches!(self.screen, Screen::Documents | Screen::DocumentView) {
             return Ok(());
         }
-        if self.block_if_read_only("delete documents") {
+        if self.block_if_write_disabled("delete documents") {
             return Ok(());
         }
         let result = (|| -> Result<()> {
@@ -67,7 +71,7 @@ impl App {
         if self.screen != Screen::Documents {
             return Ok(());
         }
-        if self.block_if_read_only("insert documents") {
+        if self.block_if_write_disabled("insert documents") {
             return Ok(());
         }
         let result = (|| -> Result<()> {
@@ -107,7 +111,7 @@ impl App {
                 None => {}
             }
         }
-        if self.block_if_read_only("edit documents") {
+        if self.block_if_write_disabled("edit documents") {
             return Ok(());
         }
         let result = (|| -> Result<()> {
@@ -139,7 +143,7 @@ impl App {
         if self.screen != Screen::Documents {
             return Ok(());
         }
-        if self.block_if_read_only("save queries") {
+        if self.block_if_write_disabled("save queries") {
             return Ok(());
         }
         self.query_save_source = self
@@ -201,7 +205,7 @@ impl App {
         if self.screen != Screen::Documents {
             return Ok(());
         }
-        if self.block_if_read_only("save aggregations") {
+        if self.block_if_write_disabled("save aggregations") {
             return Ok(());
         }
         self.aggregation_save_source = self
@@ -680,9 +684,11 @@ impl App {
             collection,
             document,
         };
-        let inserted_id = self
-            .runtime
-            .block_on(self.executor.insert_document(&self.storage.config, &spec))?;
+        let inserted_id = self.runtime.block_on(self.executor.insert_document(
+            &self.storage.config,
+            self.write_guard(),
+            &spec,
+        ))?;
         self.reload_documents_after_change()?;
         self.message = Some(format!("inserted document {}", format_bson(&inserted_id)));
         Ok(())
@@ -724,8 +730,11 @@ impl App {
             id: original_id,
             document: updated,
         };
-        self.runtime
-            .block_on(self.executor.replace_document(&self.storage.config, &spec))?;
+        self.runtime.block_on(self.executor.replace_document(
+            &self.storage.config,
+            self.write_guard(),
+            &spec,
+        ))?;
         self.reload_documents_after_change()?;
         self.message = Some(if id_changed {
             "updated document (kept original _id)".to_string()
@@ -1125,7 +1134,6 @@ mod tests {
                     uri: "mongodb://localhost:27017".to_string(),
                     default_database: Some("app".to_string()),
                 }],
-                read_only: Some(false),
                 ..Config::default()
             },
             queries: Vec::new(),
@@ -1136,6 +1144,7 @@ mod tests {
 
     fn app_with_document_context() -> App {
         let mut app = App::test_app_with_storage(storage_with_context());
+        app.write_enabled = true;
         app.screen = Screen::Documents;
         app.connection_index = Some(0);
         app.database_items = vec!["app".to_string()];
@@ -1168,17 +1177,17 @@ mod tests {
     }
 
     #[test]
-    fn request_delete_document_is_blocked_in_read_only_mode() {
-        let mut storage = storage_with_context();
-        storage.config.read_only = Some(true);
-        let mut app = App::test_app_with_storage(storage);
+    fn request_delete_document_is_blocked_without_dangerous_flag() {
+        let mut app = App::test_app_with_storage(storage_with_context());
         app.screen = Screen::Documents;
 
         app.request_delete_document().expect("delete request");
         assert!(app.confirm.is_none());
         assert_eq!(
             app.message.as_deref(),
-            Some("read-only mode: delete documents is disabled")
+            Some(
+                "write mode disabled for this run: delete documents is blocked; rerun with --dangerously-enable-write"
+            )
         );
     }
 
@@ -1353,10 +1362,8 @@ mod tests {
     }
 
     #[test]
-    fn export_results_is_available_in_read_only_mode() {
-        let mut storage = storage_with_context();
-        storage.config.read_only = Some(true);
-        let mut app = App::test_app_with_storage(storage);
+    fn export_results_is_available_without_dangerous_flag() {
+        let mut app = App::test_app_with_storage(storage_with_context());
         app.screen = Screen::Documents;
         app.connection_index = Some(0);
         app.database_items = vec!["app".to_string()];

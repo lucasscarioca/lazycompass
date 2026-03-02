@@ -15,7 +15,7 @@ Read `references/lazycompass-reference.md` only when you need exact command synt
 2. Prefer `lazycompass query` and `lazycompass agg` for agent work.
 3. Keep scope explicit with `--connection`, `--db`, and `--collection` whenever resolution is ambiguous.
 4. Use `-o/--output <path>` when the agent needs a durable artifact; this is a local file write, not a database mutation.
-5. Do not use `--write-enabled`, `insert`, `update`, or `$out`/`$merge` unless the user explicitly authorizes a DB write.
+5. Do not use `--dangerously-enable-write`, `--yolo`, `insert`, `update`, or `$out`/`$merge` unless the user explicitly authorizes a DB write.
 6. Show the exact write command before executing risky mutations.
 
 ## Fast Workflow
@@ -65,7 +65,7 @@ Resolution rules:
 ## Write Escalation Procedure
 
 1. Confirm explicit user intent to mutate MongoDB.
-2. Use `lazycompass --write-enabled insert ...` or `lazycompass --write-enabled update ...` only for that single command.
+2. Use `lazycompass --dangerously-enable-write insert ...` or `lazycompass --dangerously-enable-write update ...` only for that single command.
 3. For `$out` or `$merge`, also add `--allow-pipeline-writes`.
 4. Avoid changing config to make writes persistent unless the user explicitly asks.
 5. Return to read-only commands immediately after the write task.

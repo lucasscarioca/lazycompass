@@ -1,5 +1,7 @@
 use anyhow::Result;
-use lazycompass_core::{Config, ConnectionSpec, LoggingConfig, ThemeConfig, TimeoutConfig};
+use lazycompass_core::{
+    Config, ConnectionSpec, LoggingConfig, ThemeConfig, TimeoutConfig, WriteGuard,
+};
 use lazycompass_mongo::{
     AggregationSpec, Bson, DocumentDeleteSpec, DocumentInsertSpec, DocumentReplaceSpec,
     MongoExecutor, QuerySpec,
@@ -40,8 +42,6 @@ async fn playground_query_and_aggregation() -> Result<()> {
         }],
         theme: ThemeConfig::default(),
         logging: LoggingConfig::default(),
-        read_only: Some(false),
-        allow_pipeline_writes: None,
         allow_insecure: None,
         timeouts: TimeoutConfig {
             connect_ms: Some(5_000),
@@ -72,7 +72,9 @@ async fn playground_query_and_aggregation() -> Result<()> {
         pipeline: "[ { \"$group\": { \"_id\": \"$userId\", \"count\": { \"$sum\": 1 } } } ]"
             .to_string(),
     };
-    let results = executor.execute_aggregation(&config, &aggregation).await?;
+    let results = executor
+        .execute_aggregation(&config, WriteGuard::new(false, false), &aggregation)
+        .await?;
     assert!(!results.is_empty());
 
     let nonce = SystemTime::now()
@@ -88,7 +90,10 @@ async fn playground_query_and_aggregation() -> Result<()> {
         collection: collection.clone(),
         document: doc! { "marker": marker.clone(), "step": "insert" },
     };
-    let inserted_id = executor.insert_document(&config, &insert_spec).await?;
+    let write_guard = WriteGuard::new(true, false);
+    let inserted_id = executor
+        .insert_document(&config, write_guard, &insert_spec)
+        .await?;
 
     let inserted_rows = executor
         .execute_query(
@@ -119,7 +124,9 @@ async fn playground_query_and_aggregation() -> Result<()> {
         id: inserted_id.clone(),
         document: replacement,
     };
-    executor.replace_document(&config, &replace_spec).await?;
+    executor
+        .replace_document(&config, write_guard, &replace_spec)
+        .await?;
 
     let replaced_rows = executor
         .execute_query(
@@ -147,7 +154,9 @@ async fn playground_query_and_aggregation() -> Result<()> {
         collection: collection.clone(),
         id: inserted_id.clone(),
     };
-    executor.delete_document(&config, &delete_spec).await?;
+    executor
+        .delete_document(&config, write_guard, &delete_spec)
+        .await?;
 
     let deleted_rows = executor
         .execute_query(

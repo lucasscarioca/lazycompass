@@ -8,7 +8,7 @@ use tracing_subscriber::filter::{LevelFilter, Targets};
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 
-pub(crate) fn init_logging(paths: &ConfigPaths, config: &Config) -> Result<()> {
+pub(crate) fn init_logging(paths: &ConfigPaths, config: &Config, guard: WriteGuard) -> Result<()> {
     let (level, warning) = parse_log_level(config.logging.level.as_deref());
     if let Some(warning) = warning {
         eprintln!("warning: {warning}");
@@ -20,7 +20,6 @@ pub(crate) fn init_logging(paths: &ConfigPaths, config: &Config) -> Result<()> {
         .with_target("lazycompass_mongo", level)
         .with_target("lazycompass_core", level)
         .with_default(LevelFilter::WARN);
-    let guard = WriteGuard::from_config(config);
     let writer = if guard.ensure_write_allowed("write logs").is_err() {
         BoxMakeWriter::new(stderr)
     } else {
@@ -51,18 +50,7 @@ pub(crate) fn init_logging(paths: &ConfigPaths, config: &Config) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn apply_cli_overrides(
-    config: &mut Config,
-    write_enabled: bool,
-    allow_pipeline_writes: bool,
-    allow_insecure: bool,
-) {
-    if write_enabled {
-        config.read_only = Some(false);
-    }
-    if allow_pipeline_writes {
-        config.allow_pipeline_writes = Some(true);
-    }
+pub(crate) fn apply_cli_overrides(config: &mut Config, allow_insecure: bool) {
     if allow_insecure {
         config.allow_insecure = Some(true);
     }

@@ -3,6 +3,7 @@ use lazycompass_core::{Config, LoggingConfig, TimeoutConfig};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use toml::Value;
 
 use crate::ConfigPaths;
 
@@ -32,12 +33,35 @@ fn read_config(path: &Path) -> Result<Config> {
     load_dotenv_for_config(path)?;
     let contents = fs::read_to_string(path)
         .with_context(|| format!("unable to read config file {}", path.display()))?;
-    let mut config: Config = toml::from_str(&contents)
+    let value: Value = toml::from_str(&contents)
+        .with_context(|| format!("invalid TOML in config file {}", path.display()))?;
+    reject_removed_keys(&value)?;
+    let mut config: Config = value
+        .try_into()
         .with_context(|| format!("invalid TOML in config file {}", path.display()))?;
     resolve_env_vars(&mut config, path)?;
     validate_config(&config)
         .with_context(|| format!("invalid config data in {}", path.display()))?;
     Ok(config)
+}
+
+fn reject_removed_keys(value: &Value) -> Result<()> {
+    let Some(table) = value.as_table() else {
+        return Ok(());
+    };
+
+    if table.contains_key("read_only") {
+        anyhow::bail!(
+            "config key 'read_only' is no longer supported; writes must be enabled per run with --dangerously-enable-write"
+        );
+    }
+    if table.contains_key("allow_pipeline_writes") {
+        anyhow::bail!(
+            "config key 'allow_pipeline_writes' is no longer supported; pipeline write stages must be enabled per run with --allow-pipeline-writes"
+        );
+    }
+
+    Ok(())
 }
 
 fn load_dotenv_for_config(path: &Path) -> Result<()> {
@@ -178,8 +202,6 @@ fn merge_config(global: Config, repo: Config) -> Config {
         max_size_mb: repo.logging.max_size_mb.or(global.logging.max_size_mb),
         max_backups: repo.logging.max_backups.or(global.logging.max_backups),
     };
-    let read_only = repo.read_only.or(global.read_only);
-    let allow_pipeline_writes = repo.allow_pipeline_writes.or(global.allow_pipeline_writes);
     let allow_insecure = repo.allow_insecure.or(global.allow_insecure);
     let timeouts = TimeoutConfig {
         connect_ms: repo.timeouts.connect_ms.or(global.timeouts.connect_ms),
@@ -190,8 +212,6 @@ fn merge_config(global: Config, repo: Config) -> Config {
         connections,
         theme,
         logging,
-        read_only,
-        allow_pipeline_writes,
         allow_insecure,
         timeouts,
     }
@@ -218,9 +238,7 @@ mod tests {
 
         write_file(
             &global_root.join("config.toml"),
-            r#"read_only = true
-
-[timeouts]
+            r#"[timeouts]
 connect_ms = 5000
 query_ms = 25000
 
@@ -243,9 +261,7 @@ file = "global.log"
         );
         write_file(
             &repo_root.join(".lazycompass/config.toml"),
-            r#"read_only = false
-
-[timeouts]
+            r#"[timeouts]
 connect_ms = 8000
 query_ms = 40000
 
@@ -293,7 +309,6 @@ file = "repo.log"
         assert_eq!(config.theme.name.as_deref(), Some("ember"));
         assert_eq!(config.logging.level.as_deref(), Some("debug"));
         assert_eq!(config.logging.file.as_deref(), Some("repo.log"));
-        assert_eq!(config.read_only, Some(false));
         assert_eq!(config.timeouts.connect_ms, Some(8000));
         assert_eq!(config.timeouts.query_ms, Some(40000));
 
@@ -374,6 +389,43 @@ uri = "${{{missing_var}}}"
     }
 
     #[test]
+    fn load_config_rejects_removed_read_only_key() {
+        let root = temp_root("config_removed_read_only");
+        let global_root = root.join("global");
+        write_file(&global_root.join("config.toml"), "read_only = false\n");
+
+        let paths = ConfigPaths {
+            global_root,
+            repo_root: None,
+        };
+        let err = load_config(&paths).expect_err("expected removed key error");
+        assert!(err.to_string().contains("read_only"));
+        assert!(err.to_string().contains("--dangerously-enable-write"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn load_config_rejects_removed_allow_pipeline_writes_key() {
+        let root = temp_root("config_removed_pipeline");
+        let global_root = root.join("global");
+        write_file(
+            &global_root.join("config.toml"),
+            "allow_pipeline_writes = true\n",
+        );
+
+        let paths = ConfigPaths {
+            global_root,
+            repo_root: None,
+        };
+        let err = load_config(&paths).expect_err("expected removed key error");
+        assert!(err.to_string().contains("allow_pipeline_writes"));
+        assert!(err.to_string().contains("--allow-pipeline-writes"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn log_file_path_uses_global_root_for_relative() -> Result<()> {
         let root = temp_root("log_path");
         let global_root = root.join("global");
@@ -391,8 +443,6 @@ uri = "${{{missing_var}}}"
                 max_size_mb: None,
                 max_backups: None,
             },
-            read_only: None,
-            allow_pipeline_writes: None,
             allow_insecure: None,
             timeouts: TimeoutConfig::default(),
         };

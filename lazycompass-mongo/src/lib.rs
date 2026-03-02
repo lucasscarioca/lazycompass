@@ -151,6 +151,7 @@ impl MongoExecutor {
     pub async fn execute_aggregation(
         &self,
         config: &Config,
+        guard: WriteGuard,
         spec: &AggregationSpec,
     ) -> Result<Vec<Document>> {
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
@@ -159,7 +160,7 @@ impl MongoExecutor {
         let collection = database.collection::<Document>(&spec.collection);
 
         let pipeline = parse_json_pipeline(&spec.pipeline)?;
-        ensure_pipeline_allowed(config, &pipeline)?;
+        ensure_pipeline_allowed(guard, &pipeline)?;
         let options = AggregateOptions::builder()
             .max_time(config.query_timeout())
             .build();
@@ -274,9 +275,10 @@ impl MongoExecutor {
     pub async fn insert_document(
         &self,
         config: &Config,
+        guard: WriteGuard,
         spec: &DocumentInsertSpec,
     ) -> Result<Bson> {
-        ensure_write_allowed(config, "insert documents")?;
+        ensure_write_allowed(guard, "insert documents")?;
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
         let client = connect(config, connection).await?;
         let database = client.database(&spec.database);
@@ -297,9 +299,10 @@ impl MongoExecutor {
     pub async fn replace_document(
         &self,
         config: &Config,
+        guard: WriteGuard,
         spec: &DocumentReplaceSpec,
     ) -> Result<()> {
-        ensure_write_allowed(config, "replace documents")?;
+        ensure_write_allowed(guard, "replace documents")?;
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
         let client = connect(config, connection).await?;
         let database = client.database(&spec.database);
@@ -319,8 +322,13 @@ impl MongoExecutor {
         Ok(())
     }
 
-    pub async fn delete_document(&self, config: &Config, spec: &DocumentDeleteSpec) -> Result<()> {
-        ensure_write_allowed(config, "delete documents")?;
+    pub async fn delete_document(
+        &self,
+        config: &Config,
+        guard: WriteGuard,
+        spec: &DocumentDeleteSpec,
+    ) -> Result<()> {
+        ensure_write_allowed(guard, "delete documents")?;
         let connection = self.resolve_connection(config, spec.connection.as_deref())?;
         let client = connect(config, connection).await?;
         let database = client.database(&spec.database);
@@ -359,15 +367,13 @@ fn normalize_json_option(value: Option<String>) -> Option<String> {
     })
 }
 
-fn ensure_write_allowed(config: &Config, action: &str) -> Result<()> {
-    WriteGuard::from_config(config)
-        .ensure_write_allowed(action)
-        .map_err(Into::into)
+fn ensure_write_allowed(guard: WriteGuard, action: &str) -> Result<()> {
+    guard.ensure_write_allowed(action).map_err(Into::into)
 }
 
-fn ensure_pipeline_allowed(config: &Config, pipeline: &[Document]) -> Result<()> {
+fn ensure_pipeline_allowed(guard: WriteGuard, pipeline: &[Document]) -> Result<()> {
     if let Some(stage) = find_pipeline_write_stage(pipeline) {
-        WriteGuard::from_config(config).ensure_pipeline_allowed(stage)?;
+        guard.ensure_pipeline_allowed(stage)?;
     }
     Ok(())
 }
@@ -441,14 +447,6 @@ mod tests {
             name: name.to_string(),
             uri: format!("mongodb://{name}:27017"),
             default_database: None,
-        }
-    }
-
-    fn writable_config() -> Config {
-        Config {
-            read_only: Some(false),
-            allow_pipeline_writes: Some(false),
-            ..Config::default()
         }
     }
 
@@ -586,43 +584,38 @@ mod tests {
     }
 
     #[test]
-    fn ensure_write_allowed_blocks_read_only_mutations() {
-        let err = ensure_write_allowed(&Config::default(), "insert documents")
-            .expect_err("expected read-only error");
-        assert!(err.to_string().contains("read-only mode"));
+    fn ensure_write_allowed_blocks_without_dangerous_flag() {
+        let err = ensure_write_allowed(WriteGuard::new(false, false), "insert documents")
+            .expect_err("expected write-disabled error");
+        assert!(err.to_string().contains("--dangerously-enable-write"));
     }
 
     #[test]
     fn ensure_pipeline_allowed_blocks_out_without_flag() {
         let pipeline = vec![bson::doc! { "$out": "archive" }];
-        let err = ensure_pipeline_allowed(&writable_config(), &pipeline)
+        let err = ensure_pipeline_allowed(WriteGuard::new(true, false), &pipeline)
             .expect_err("expected pipeline write error");
-        assert!(err.to_string().contains("allow_pipeline_writes"));
+        assert!(err.to_string().contains("--allow-pipeline-writes"));
     }
 
     #[test]
-    fn ensure_pipeline_allowed_blocks_merge_in_read_only() {
+    fn ensure_pipeline_allowed_blocks_merge_without_dangerous_flag() {
         let pipeline = vec![bson::doc! { "$merge": { "into": "archive" } }];
-        let err = ensure_pipeline_allowed(&Config::default(), &pipeline)
-            .expect_err("expected read-only error");
-        assert!(err.to_string().contains("read-only mode"));
+        let err = ensure_pipeline_allowed(WriteGuard::new(false, true), &pipeline)
+            .expect_err("expected write-disabled error");
+        assert!(err.to_string().contains("--dangerously-enable-write"));
     }
 
     #[test]
     fn ensure_pipeline_allowed_accepts_non_write_pipeline() {
         let pipeline = vec![bson::doc! { "$match": { "active": true } }];
-        assert!(ensure_pipeline_allowed(&Config::default(), &pipeline).is_ok());
+        assert!(ensure_pipeline_allowed(WriteGuard::new(false, false), &pipeline).is_ok());
     }
 
     #[test]
     fn ensure_pipeline_allowed_accepts_write_stage_when_enabled() {
-        let config = Config {
-            read_only: Some(false),
-            allow_pipeline_writes: Some(true),
-            ..Config::default()
-        };
         let pipeline = vec![bson::doc! { "$merge": { "into": "archive" } }];
-        assert!(ensure_pipeline_allowed(&config, &pipeline).is_ok());
+        assert!(ensure_pipeline_allowed(WriteGuard::new(true, true), &pipeline).is_ok());
     }
 
     #[test]

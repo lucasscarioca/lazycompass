@@ -18,10 +18,6 @@ pub struct Config {
     #[serde(default)]
     pub logging: LoggingConfig,
     #[serde(default)]
-    pub read_only: Option<bool>,
-    #[serde(default)]
-    pub allow_pipeline_writes: Option<bool>,
-    #[serde(default)]
     pub allow_insecure: Option<bool>,
     #[serde(default)]
     pub timeouts: TimeoutConfig,
@@ -202,14 +198,6 @@ impl OutputFormat {
 }
 
 impl Config {
-    pub fn read_only(&self) -> bool {
-        self.read_only.unwrap_or(true)
-    }
-
-    pub fn allow_pipeline_writes(&self) -> bool {
-        self.allow_pipeline_writes.unwrap_or(false)
-    }
-
     pub fn allow_insecure(&self) -> bool {
         self.allow_insecure.unwrap_or(false)
     }
@@ -334,24 +322,20 @@ fn parse_bool(value: &str) -> Option<bool> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WriteGuard {
-    read_only: bool,
+    write_enabled: bool,
     allow_pipeline_writes: bool,
 }
 
 impl WriteGuard {
-    pub fn new(read_only: bool, allow_pipeline_writes: bool) -> Self {
+    pub fn new(write_enabled: bool, allow_pipeline_writes: bool) -> Self {
         Self {
-            read_only,
+            write_enabled,
             allow_pipeline_writes,
         }
     }
 
-    pub fn from_config(config: &Config) -> Self {
-        Self::new(config.read_only(), config.allow_pipeline_writes())
-    }
-
     pub fn ensure_write_allowed(&self, action: &str) -> Result<(), WriteGuardError> {
-        if self.read_only {
+        if !self.write_enabled {
             return Err(WriteGuardError::ReadOnly {
                 action: action.to_string(),
             });
@@ -372,9 +356,13 @@ impl WriteGuard {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum WriteGuardError {
-    #[error("read-only mode: {action} is disabled")]
+    #[error(
+        "write mode disabled for this run: {action} is blocked; rerun with --dangerously-enable-write"
+    )]
     ReadOnly { action: String },
-    #[error("pipeline stage '{stage}' is blocked; enable allow_pipeline_writes to proceed")]
+    #[error(
+        "pipeline stage '{stage}' is blocked; rerun with --dangerously-enable-write --allow-pipeline-writes"
+    )]
     PipelineWrite { stage: String },
 }
 
@@ -623,8 +611,6 @@ mod tests {
             }],
             theme: ThemeConfig::default(),
             logging: LoggingConfig::default(),
-            read_only: None,
-            allow_pipeline_writes: None,
             allow_insecure: None,
             timeouts: TimeoutConfig::default(),
         };
@@ -644,8 +630,6 @@ mod tests {
             }],
             theme: ThemeConfig::default(),
             logging: LoggingConfig::default(),
-            read_only: None,
-            allow_pipeline_writes: None,
             allow_insecure: Some(true),
             timeouts: TimeoutConfig::default(),
         };
@@ -715,37 +699,18 @@ mod tests {
     }
 
     #[test]
-    fn read_only_defaults_to_true() {
-        let config = Config::default();
-        assert!(config.read_only());
-
-        let mut config = Config::default();
-        config.read_only = Some(false);
-        assert!(!config.read_only());
-    }
-
-    #[test]
-    fn allow_pipeline_writes_defaults_to_false() {
-        let config = Config::default();
-        assert!(!config.allow_pipeline_writes());
-
-        let mut config = Config::default();
-        config.allow_pipeline_writes = Some(true);
-        assert!(config.allow_pipeline_writes());
-    }
-
-    #[test]
-    fn write_guard_blocks_in_read_only() {
-        let guard = WriteGuard::new(true, true);
+    fn write_guard_blocks_without_dangerous_flag() {
+        let guard = WriteGuard::new(false, true);
         let err = guard
             .ensure_write_allowed("insert documents")
-            .expect_err("read-only");
+            .expect_err("write-disabled");
         assert!(matches!(err, WriteGuardError::ReadOnly { .. }));
+        assert!(err.to_string().contains("--dangerously-enable-write"));
     }
 
     #[test]
     fn write_guard_blocks_pipeline_without_flag() {
-        let guard = WriteGuard::new(false, false);
+        let guard = WriteGuard::new(true, false);
         let err = guard
             .ensure_pipeline_allowed("$out")
             .expect_err("pipeline guard");
@@ -754,7 +719,7 @@ mod tests {
 
     #[test]
     fn write_guard_allows_pipeline_with_flag() {
-        let guard = WriteGuard::new(false, true);
+        let guard = WriteGuard::new(true, true);
         assert!(guard.ensure_pipeline_allowed("$merge").is_ok());
     }
 }

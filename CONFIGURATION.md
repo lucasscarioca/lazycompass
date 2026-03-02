@@ -24,8 +24,6 @@ Validation rules:
 
 Defaults:
 
-- `read_only`: true
-- `allow_pipeline_writes`: false
 - `allow_insecure`: false
 - `timeouts.connect_ms`: 10000
 - `timeouts.query_ms`: 30000
@@ -37,10 +35,12 @@ Defaults:
 
 Write controls:
 
-- `read_only` blocks database mutations and config/saved-spec writes (including log file writes), but still allows exporting or copying query/aggregation results.
-- `allow_pipeline_writes` allows `$out`/`$merge` stages when `read_only` is false.
+- Writes are disabled by default on every run.
+- Use `--dangerously-enable-write` or `--yolo` to enable write actions for the current CLI/TUI session.
+- Use `--allow-pipeline-writes` with `--dangerously-enable-write` to allow `$out`/`$merge` for the current run.
 - `allow_insecure` silences warnings for connections missing TLS or authentication.
-- CLI overrides: `--write-enabled` disables `read_only`; `--allow-pipeline-writes` enables pipeline writes for the run; `--allow-insecure` silences TLS/auth warnings for the run.
+- Config files cannot enable writes. `read_only` and `allow_pipeline_writes` are rejected if present.
+- Runtime override: `--allow-insecure` silences TLS/auth warnings for the run.
 
 File permissions (Unix):
 
@@ -61,8 +61,6 @@ Config editing:
 
 ### Root
 
-- `read_only` (bool, optional)
-- `allow_pipeline_writes` (bool, optional)
 - `allow_insecure` (bool, optional)
 - `connections` (array of ConnectionSpec, optional)
 - `theme` (ThemeConfig, optional)
@@ -99,8 +97,6 @@ If `logging.file` is a relative path, it is resolved under `~/.config/lazycompas
 ## Example config.toml
 
 ```toml
-read_only = true
-allow_pipeline_writes = false
 allow_insecure = false
 
 [[connections]]

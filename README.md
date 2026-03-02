@@ -84,6 +84,8 @@ MONGO_URI=mongodb://localhost:27017/app
 
 ```bash
 lazycompass
+# or for a write-enabled session
+lazycompass --dangerously-enable-write
 ```
 
 Env var naming:
@@ -97,7 +99,7 @@ Write actions open your `$VISUAL` or `$EDITOR` for JSON editing (command + args 
 
 Documents screen keys: `i` insert, `e` edit, `d` delete, `x` export results, `y` copy results, `Q` save query, `A` save aggregation, `r` run saved query, `a` run saved aggregation. Collections screen key: `I` list indexes. Connections screen key: `n` add connection.
 
-Applied query/aggregation results can be exported from the TUI as JSON, CSV, or table text. Copy-to-clipboard uses native clipboard commands when available and falls back to OSC52. Result export/copy remains available in `read_only` mode.
+Applied query/aggregation results can be exported from the TUI as JSON, CSV, or table text. Copy-to-clipboard uses native clipboard commands when available and falls back to OSC52. Result export/copy remains available without `--dangerously-enable-write`.
 
 Run a saved query or aggregation:
 
@@ -139,10 +141,10 @@ Manage config and data:
 lazycompass init
 lazycompass config edit
 lazycompass config add-connection
-lazycompass insert --db lazycompass --collection users --document '{"email": "a@example.com"}'
-lazycompass update --db lazycompass --collection users --id '{"$oid":"64e1f2b4c2a3e02c9a0a9c10"}' --document '{"email": "a@example.com", "active": true}'
-lazycompass insert --collection users --document '{"email": "a@example.com"}' # uses connection default_database
-lazycompass update --collection users --id '{"$oid":"64e1f2b4c2a3e02c9a0a9c10"}' --document '{"email": "a@example.com", "active": true}' # uses connection default_database
+lazycompass --dangerously-enable-write insert --db lazycompass --collection users --document '{"email": "a@example.com"}'
+lazycompass --dangerously-enable-write update --db lazycompass --collection users --id '{"$oid":"64e1f2b4c2a3e02c9a0a9c10"}' --document '{"email": "a@example.com", "active": true}'
+lazycompass --dangerously-enable-write insert --collection users --document '{"email": "a@example.com"}' # uses connection default_database
+lazycompass --dangerously-enable-write update --collection users --id '{"$oid":"64e1f2b4c2a3e02c9a0a9c10"}' --document '{"email": "a@example.com", "active": true}' # uses connection default_database
 ```
 
 ## Configuration

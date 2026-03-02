@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use lazycompass_core::{AggregationRequest, AggregationTarget, OutputFormat};
+use lazycompass_core::{AggregationRequest, AggregationTarget, OutputFormat, WriteGuard};
 use lazycompass_mongo::{AggregationSpec, MongoExecutor};
 use lazycompass_storage::{ConfigPaths, StorageSnapshot, load_storage};
 
@@ -11,7 +11,7 @@ use crate::output::print_documents;
 
 pub(crate) fn run_agg(
     args: AggArgs,
-    write_enabled: bool,
+    dangerously_enable_write: bool,
     allow_pipeline_writes: bool,
     allow_insecure: bool,
 ) -> Result<()> {
@@ -19,13 +19,9 @@ pub(crate) fn run_agg(
     let paths = ConfigPaths::resolve_from(&cwd)?;
     let storage = load_storage(&paths)?;
     let mut config = storage.config.clone();
-    apply_cli_overrides(
-        &mut config,
-        write_enabled,
-        allow_pipeline_writes,
-        allow_insecure,
-    );
-    init_logging(&paths, &config)?;
+    apply_cli_overrides(&mut config, allow_insecure);
+    let write_guard = WriteGuard::new(dangerously_enable_write, allow_pipeline_writes);
+    init_logging(&paths, &config, write_guard)?;
     tracing::info!(component = "cli", command = "agg", "lazycompass started");
     report_warnings(&storage);
     let mut args = args;
@@ -51,7 +47,7 @@ pub(crate) fn run_agg(
         "executing aggregation"
     );
     let runtime = tokio::runtime::Runtime::new().context("unable to start async runtime")?;
-    let documents = runtime.block_on(executor.execute_aggregation(&config, &spec))?;
+    let documents = runtime.block_on(executor.execute_aggregation(&config, write_guard, &spec))?;
     print_documents(request.output, &documents, output_path.as_deref())
 }
 

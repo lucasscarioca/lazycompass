@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use lazycompass_core::WriteGuard;
 use lazycompass_mongo::{DocumentInsertSpec, MongoExecutor, parse_json_document};
 use lazycompass_storage::{ConfigPaths, load_storage};
 
@@ -11,7 +12,7 @@ use crate::output::format_bson;
 
 pub(crate) fn run_insert(
     args: InsertArgs,
-    write_enabled: bool,
+    dangerously_enable_write: bool,
     allow_pipeline_writes: bool,
     allow_insecure: bool,
 ) -> Result<()> {
@@ -19,13 +20,9 @@ pub(crate) fn run_insert(
     let paths = ConfigPaths::resolve_from(&cwd)?;
     let storage = load_storage(&paths)?;
     let mut config = storage.config.clone();
-    apply_cli_overrides(
-        &mut config,
-        write_enabled,
-        allow_pipeline_writes,
-        allow_insecure,
-    );
-    init_logging(&paths, &config)?;
+    apply_cli_overrides(&mut config, allow_insecure);
+    let write_guard = WriteGuard::new(dangerously_enable_write, allow_pipeline_writes);
+    init_logging(&paths, &config, write_guard)?;
     tracing::info!(component = "cli", command = "insert", "lazycompass started");
     report_warnings(&storage);
 
@@ -43,7 +40,7 @@ pub(crate) fn run_insert(
         "inserting document"
     );
     let runtime = tokio::runtime::Runtime::new().context("unable to start async runtime")?;
-    let inserted_id = runtime.block_on(executor.insert_document(&config, &spec))?;
+    let inserted_id = runtime.block_on(executor.insert_document(&config, write_guard, &spec))?;
     println!("inserted document {}", format_bson(&inserted_id));
     Ok(())
 }

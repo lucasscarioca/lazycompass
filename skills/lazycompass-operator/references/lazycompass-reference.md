@@ -13,16 +13,16 @@
 ## 1) Safety-First Operation
 
 - Treat every task as read-only unless user explicitly requests writes.
-- Keep `read_only = true` by default.
-- Do not use `--write-enabled` unless mutation is requested.
+- Writes are disabled by default on every run.
+- Do not use `--dangerously-enable-write` or `--yolo` unless mutation is requested.
 - Never run aggregation write stages (`$out`, `$merge`) unless user explicitly requests them and command includes `--allow-pipeline-writes`.
-- In read-only mode, DB writes are blocked and local saved-spec/log writes are also blocked.
+- Without `--dangerously-enable-write`, DB writes are blocked and log-file writes fall back to stderr.
 - `-o/--output` writes query/aggregation results to a file and is allowed for read-only query work.
 
 Write controls:
 
-- `--write-enabled`: disable read-only for current run.
-- `--allow-pipeline-writes`: allow `$out`/`$merge` (still requires write-enabled).
+- `--dangerously-enable-write` or `--yolo`: enable writes for the current run.
+- `--allow-pipeline-writes`: allow `$out`/`$merge` (still requires `--dangerously-enable-write`).
 - `--allow-insecure`: silence TLS/auth warnings for insecure connection URIs.
 
 ## 2) Config + Path Model
@@ -44,8 +44,8 @@ Saved specs (repo-only):
 
 Defaults:
 
-- `read_only = true`
-- `allow_pipeline_writes = false`
+- writes disabled unless `--dangerously-enable-write` is passed
+- pipeline writes disabled unless `--allow-pipeline-writes` is also passed
 - `allow_insecure = false`
 - `timeouts.connect_ms = 10000`
 - `timeouts.query_ms = 30000`
@@ -86,16 +86,16 @@ lazycompass agg --db <db> --collection <collection> --pipeline '<json array>' [-
 Write operations (explicit approval only):
 
 ```bash
-lazycompass --write-enabled insert --db <db> --collection <collection> --document '<json>' [--connection <name>]
-lazycompass --write-enabled insert --db <db> --collection <collection> --file <path-to-json> [--connection <name>]
-lazycompass --write-enabled update --db <db> --collection <collection> --id '<json>' --document '<json>' [--connection <name>]
-lazycompass --write-enabled update --db <db> --collection <collection> --id '<json>' --file <path-to-json> [--connection <name>]
+lazycompass --dangerously-enable-write insert --db <db> --collection <collection> --document '<json>' [--connection <name>]
+lazycompass --dangerously-enable-write insert --db <db> --collection <collection> --file <path-to-json> [--connection <name>]
+lazycompass --dangerously-enable-write update --db <db> --collection <collection> --id '<json>' --document '<json>' [--connection <name>]
+lazycompass --dangerously-enable-write update --db <db> --collection <collection> --id '<json>' --file <path-to-json> [--connection <name>]
 ```
 
 Pipeline write stages (`$out`, `$merge`):
 
 ```bash
-lazycompass --write-enabled --allow-pipeline-writes agg --db <db> --collection <collection> --pipeline '<json array>'
+lazycompass --dangerously-enable-write --allow-pipeline-writes agg --db <db> --collection <collection> --pipeline '<json array>'
 ```
 
 Upgrade:
@@ -110,7 +110,8 @@ lazycompass upgrade --no-modify-path
 
 Global flags usable with CLI or TUI launch:
 
-- `--write-enabled`
+- `--dangerously-enable-write`
+- `--yolo`
 - `--allow-pipeline-writes`
 - `--allow-insecure`
 
@@ -209,11 +210,11 @@ Use TUI write actions only with explicit user authorization.
 
 ## 7) Common Errors and Fixes
 
-- `read-only mode: <action> is disabled`
-Use read commands or explicitly run with `--write-enabled` if user requested mutation.
+- `write mode disabled for this run: <action> is blocked`
+Use read commands or explicitly run with `--dangerously-enable-write` if user requested mutation.
 
 - `pipeline stage '$out' is blocked`
-Use `--write-enabled --allow-pipeline-writes` only when user explicitly asks for pipeline writes.
+Use `--dangerously-enable-write --allow-pipeline-writes` only when user explicitly asks for pipeline writes.
 
 - `multiple connections configured`
 Pass `--connection <name>`.

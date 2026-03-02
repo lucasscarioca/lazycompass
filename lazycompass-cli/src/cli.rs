@@ -7,8 +7,12 @@ use std::path::PathBuf;
 pub(crate) struct Cli {
     #[command(subcommand)]
     pub(crate) command: Option<Commands>,
-    #[arg(long, global = true)]
-    pub(crate) write_enabled: bool,
+    #[arg(
+        long = "dangerously-enable-write",
+        visible_alias = "yolo",
+        global = true
+    )]
+    pub(crate) dangerously_enable_write: bool,
     #[arg(long, global = true)]
     pub(crate) allow_pipeline_writes: bool,
     #[arg(long, global = true)]

@@ -400,7 +400,7 @@ mod tests {
             aggregations: Vec::new(),
             warnings: Vec::new(),
         };
-        App::new(paths, storage, false).expect("build app")
+        App::new(paths, storage, false, false).expect("build app")
     }
 
     #[test]

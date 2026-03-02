@@ -6,6 +6,7 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+- Breaking: remove config-based write controls; `read_only` and `allow_pipeline_writes` are now rejected in config, and write sessions must opt in per run with `--dangerously-enable-write` or `--yolo`.
 - TUI: add inline query/aggregation drafts so users can edit, run, retry, and save specs after validating results.
 - TUI: add export-to-file and copy-to-clipboard for applied query/aggregation results, with JSON/CSV/table formats and single-document export from the document view.
 - CLI/TUI: add collection index listing support, with a new `indexes` CLI command and an `I` shortcut from the TUI collections browser.

@@ -94,8 +94,6 @@ mod tests {
                 name: Some("mystery".to_string()),
             },
             logging: lazycompass_core::LoggingConfig::default(),
-            read_only: None,
-            allow_pipeline_writes: None,
             allow_insecure: None,
             timeouts: lazycompass_core::TimeoutConfig::default(),
         };
@@ -112,8 +110,6 @@ mod tests {
                 name: Some("ember".to_string()),
             },
             logging: lazycompass_core::LoggingConfig::default(),
-            read_only: None,
-            allow_pipeline_writes: None,
             allow_insecure: None,
             timeouts: lazycompass_core::TimeoutConfig::default(),
         };

@@ -76,9 +76,11 @@ fn run_config_edit(paths: &ConfigPaths, scope: ConfigScope) -> Result<()> {
 # connect_ms = 10000
 # query_ms = 30000
 
-# read_only = true
-# allow_pipeline_writes = false
 # allow_insecure = false
+
+# Writes are enabled per run only:
+# lazycompass --dangerously-enable-write …
+# lazycompass --dangerously-enable-write --allow-pipeline-writes …
 "#;
         fs::write(&config_path, default_config)
             .with_context(|| format!("unable to create config file {}", config_path.display()))?;

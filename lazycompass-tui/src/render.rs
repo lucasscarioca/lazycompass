@@ -618,7 +618,12 @@ impl App {
             Line::from(Span::styled(path, self.theme.text_style())),
         ];
 
-        if self.read_only {
+        if self.write_enabled {
+            lines.push(Line::from(Span::styled(
+                "MODE: WRITE ENABLED",
+                self.theme.warning_style().add_modifier(Modifier::BOLD),
+            )));
+        } else {
             lines.push(Line::from(Span::styled(
                 "MODE: READ-ONLY",
                 self.theme.warning_style().add_modifier(Modifier::BOLD),

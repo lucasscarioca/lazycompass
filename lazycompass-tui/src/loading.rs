@@ -153,6 +153,7 @@ impl App {
         };
 
         let config = self.storage.config.clone();
+        let write_guard = self.write_guard();
         let request_id = self.next_load_id();
         self.saved_agg_load_id = Some(request_id);
         self.saved_agg_state = LoadState::Loading;
@@ -161,7 +162,9 @@ impl App {
         let sender = self.load_tx.clone();
         self.runtime.spawn(async move {
             let executor = MongoExecutor::new();
-            let result = executor.execute_aggregation(&config, &spec).await;
+            let result = executor
+                .execute_aggregation(&config, write_guard, &spec)
+                .await;
             let _ = sender.send(LoadResult::SavedAggregation {
                 id: request_id,
                 name: saved_name,
@@ -184,13 +187,16 @@ impl App {
         };
 
         let config = self.storage.config.clone();
+        let write_guard = self.write_guard();
         let request_id = self.next_load_id();
         self.inline_agg_load_id = Some(request_id);
         self.message = Some("executing inline aggregation...".to_string());
         let sender = self.load_tx.clone();
         self.runtime.spawn(async move {
             let executor = MongoExecutor::new();
-            let result = executor.execute_aggregation(&config, &spec).await;
+            let result = executor
+                .execute_aggregation(&config, write_guard, &spec)
+                .await;
             let _ = sender.send(LoadResult::InlineAggregation {
                 id: request_id,
                 result,
@@ -376,7 +382,6 @@ mod tests {
                     uri: "mongodb://localhost:27017".to_string(),
                     default_database: Some("app".to_string()),
                 }],
-                read_only: Some(false),
                 ..Config::default()
             },
             queries: Vec::new(),
@@ -384,6 +389,7 @@ mod tests {
             warnings: Vec::new(),
         };
         let mut app = App::test_app_with_storage(storage);
+        app.write_enabled = true;
         app.connection_index = Some(0);
         app.database_items = vec!["app".to_string()];
         app.database_index = Some(0);

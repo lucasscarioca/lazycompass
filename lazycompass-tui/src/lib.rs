@@ -298,7 +298,8 @@ struct App {
     executor: MongoExecutor,
     runtime: Runtime,
     theme: Theme,
-    read_only: bool,
+    write_enabled: bool,
+    allow_pipeline_writes: bool,
     screen: Screen,
     connection_index: Option<usize>,
     database_items: Vec<String>,
@@ -357,12 +358,11 @@ struct App {
     aggregation_save_source: AggregationSaveSource,
 }
 
-pub fn run(config: Config) -> Result<()> {
+pub fn run(config: Config, write_enabled: bool, allow_pipeline_writes: bool) -> Result<()> {
     let cwd = std::env::current_dir().context("unable to resolve current directory")?;
     let paths = ConfigPaths::resolve_from(&cwd)?;
-    let read_only = config.read_only();
     let storage = load_storage_with_config(&paths, config)?;
-    let mut app = App::new(paths, storage, read_only)?;
+    let mut app = App::new(paths, storage, write_enabled, allow_pipeline_writes)?;
 
     let mut terminal = setup_terminal()?;
     let result = app.run(&mut terminal);
@@ -391,14 +391,14 @@ impl App {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&root).expect("create temp root");
-        let read_only = storage.config.read_only();
         Self::new(
             ConfigPaths {
                 global_root: root.join("global"),
                 repo_root: None,
             },
             storage,
-            read_only,
+            false,
+            false,
         )
         .expect("build app")
     }

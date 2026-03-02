@@ -4,7 +4,8 @@ impl App {
     pub(crate) fn new(
         paths: ConfigPaths,
         storage: StorageSnapshot,
-        read_only: bool,
+        write_enabled: bool,
+        allow_pipeline_writes: bool,
     ) -> Result<Self> {
         let runtime = Runtime::new().context("unable to start async runtime")?;
         let (load_tx, load_rx) = mpsc::channel();
@@ -30,7 +31,8 @@ impl App {
             executor: MongoExecutor::new(),
             runtime,
             theme,
-            read_only,
+            write_enabled,
+            allow_pipeline_writes,
             screen: Screen::Connections,
             connection_index,
             database_items: Vec::new(),
@@ -606,7 +608,7 @@ impl App {
     }
 
     pub(crate) fn perform_confirm_action(&mut self, action: ConfirmAction) -> Result<()> {
-        let guard = WriteGuard::new(self.read_only, self.storage.config.allow_pipeline_writes());
+        let guard = self.write_guard();
         match action {
             ConfirmAction::DeleteDocument {
                 spec,
@@ -616,8 +618,11 @@ impl App {
                     self.message = Some(error.to_string());
                     return Ok(());
                 }
-                self.runtime
-                    .block_on(self.executor.delete_document(&self.storage.config, &spec))?;
+                self.runtime.block_on(self.executor.delete_document(
+                    &self.storage.config,
+                    guard,
+                    &spec,
+                ))?;
                 if return_to_documents {
                     self.screen = Screen::Documents;
                 }
@@ -675,7 +680,6 @@ mod tests {
                     uri: "mongodb://localhost:27017".to_string(),
                     default_database: Some("app".to_string()),
                 }],
-                read_only: Some(false),
                 ..Config::default()
             },
             queries: Vec::new(),
@@ -683,6 +687,7 @@ mod tests {
             warnings: Vec::new(),
         };
         let mut app = App::test_app_with_storage(storage);
+        app.write_enabled = true;
         app.connection_index = Some(0);
         app.database_items = vec!["app".to_string()];
         app.database_index = Some(0);

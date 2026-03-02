@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
+use lazycompass_core::WriteGuard;
 use lazycompass_storage::{ConfigPaths, load_config};
 
 use crate::cli::{Cli, Commands};
@@ -17,38 +18,38 @@ enum AppAction {
     Init(crate::cli::InitArgs),
     Indexes {
         args: crate::cli::IndexesArgs,
-        write_enabled: bool,
+        dangerously_enable_write: bool,
         allow_pipeline_writes: bool,
         allow_insecure: bool,
     },
     Query {
         args: crate::cli::QueryArgs,
-        write_enabled: bool,
+        dangerously_enable_write: bool,
         allow_pipeline_writes: bool,
         allow_insecure: bool,
     },
     Agg {
         args: crate::cli::AggArgs,
-        write_enabled: bool,
+        dangerously_enable_write: bool,
         allow_pipeline_writes: bool,
         allow_insecure: bool,
     },
     Insert {
         args: crate::cli::InsertArgs,
-        write_enabled: bool,
+        dangerously_enable_write: bool,
         allow_pipeline_writes: bool,
         allow_insecure: bool,
     },
     Update {
         args: crate::cli::UpdateArgs,
-        write_enabled: bool,
+        dangerously_enable_write: bool,
         allow_pipeline_writes: bool,
         allow_insecure: bool,
     },
     Config(crate::cli::ConfigArgs),
     Upgrade(crate::cli::UpgradeArgs),
     Tui {
-        write_enabled: bool,
+        dangerously_enable_write: bool,
         allow_pipeline_writes: bool,
         allow_insecure: bool,
     },
@@ -59,38 +60,38 @@ fn dispatch(cli: Cli) -> AppAction {
         Some(Commands::Init(args)) => AppAction::Init(args),
         Some(Commands::Indexes(args)) => AppAction::Indexes {
             args,
-            write_enabled: cli.write_enabled,
+            dangerously_enable_write: cli.dangerously_enable_write,
             allow_pipeline_writes: cli.allow_pipeline_writes,
             allow_insecure: cli.allow_insecure,
         },
         Some(Commands::Query(args)) => AppAction::Query {
             args,
-            write_enabled: cli.write_enabled,
+            dangerously_enable_write: cli.dangerously_enable_write,
             allow_pipeline_writes: cli.allow_pipeline_writes,
             allow_insecure: cli.allow_insecure,
         },
         Some(Commands::Agg(args)) => AppAction::Agg {
             args,
-            write_enabled: cli.write_enabled,
+            dangerously_enable_write: cli.dangerously_enable_write,
             allow_pipeline_writes: cli.allow_pipeline_writes,
             allow_insecure: cli.allow_insecure,
         },
         Some(Commands::Insert(args)) => AppAction::Insert {
             args,
-            write_enabled: cli.write_enabled,
+            dangerously_enable_write: cli.dangerously_enable_write,
             allow_pipeline_writes: cli.allow_pipeline_writes,
             allow_insecure: cli.allow_insecure,
         },
         Some(Commands::Update(args)) => AppAction::Update {
             args,
-            write_enabled: cli.write_enabled,
+            dangerously_enable_write: cli.dangerously_enable_write,
             allow_pipeline_writes: cli.allow_pipeline_writes,
             allow_insecure: cli.allow_insecure,
         },
         Some(Commands::Config(args)) => AppAction::Config(args),
         Some(Commands::Upgrade(args)) => AppAction::Upgrade(args),
         None => AppAction::Tui {
-            write_enabled: cli.write_enabled,
+            dangerously_enable_write: cli.dangerously_enable_write,
             allow_pipeline_writes: cli.allow_pipeline_writes,
             allow_insecure: cli.allow_insecure,
         },
@@ -104,34 +105,59 @@ fn execute(action: AppAction) -> Result<()> {
         }
         AppAction::Indexes {
             args,
-            write_enabled,
+            dangerously_enable_write,
             allow_pipeline_writes,
             allow_insecure,
-        } => run_indexes(args, write_enabled, allow_pipeline_writes, allow_insecure)?,
+        } => run_indexes(
+            args,
+            dangerously_enable_write,
+            allow_pipeline_writes,
+            allow_insecure,
+        )?,
         AppAction::Query {
             args,
-            write_enabled,
+            dangerously_enable_write,
             allow_pipeline_writes,
             allow_insecure,
-        } => run_query(args, write_enabled, allow_pipeline_writes, allow_insecure)?,
+        } => run_query(
+            args,
+            dangerously_enable_write,
+            allow_pipeline_writes,
+            allow_insecure,
+        )?,
         AppAction::Agg {
             args,
-            write_enabled,
+            dangerously_enable_write,
             allow_pipeline_writes,
             allow_insecure,
-        } => run_agg(args, write_enabled, allow_pipeline_writes, allow_insecure)?,
+        } => run_agg(
+            args,
+            dangerously_enable_write,
+            allow_pipeline_writes,
+            allow_insecure,
+        )?,
         AppAction::Insert {
             args,
-            write_enabled,
+            dangerously_enable_write,
             allow_pipeline_writes,
             allow_insecure,
-        } => run_insert(args, write_enabled, allow_pipeline_writes, allow_insecure)?,
+        } => run_insert(
+            args,
+            dangerously_enable_write,
+            allow_pipeline_writes,
+            allow_insecure,
+        )?,
         AppAction::Update {
             args,
-            write_enabled,
+            dangerously_enable_write,
             allow_pipeline_writes,
             allow_insecure,
-        } => run_update(args, write_enabled, allow_pipeline_writes, allow_insecure)?,
+        } => run_update(
+            args,
+            dangerously_enable_write,
+            allow_pipeline_writes,
+            allow_insecure,
+        )?,
         AppAction::Config(args) => {
             run_config(args)?;
         }
@@ -139,22 +165,18 @@ fn execute(action: AppAction) -> Result<()> {
             run_upgrade(args)?;
         }
         AppAction::Tui {
-            write_enabled,
+            dangerously_enable_write,
             allow_pipeline_writes,
             allow_insecure,
         } => {
             let cwd = std::env::current_dir().context("unable to resolve current directory")?;
             let paths = ConfigPaths::resolve_from(&cwd)?;
             let mut config = load_config(&paths)?;
-            apply_cli_overrides(
-                &mut config,
-                write_enabled,
-                allow_pipeline_writes,
-                allow_insecure,
-            );
-            init_logging(&paths, &config)?;
+            apply_cli_overrides(&mut config, allow_insecure);
+            let write_guard = WriteGuard::new(dangerously_enable_write, allow_pipeline_writes);
+            init_logging(&paths, &config, write_guard)?;
             tracing::info!(component = "tui", command = "tui", "lazycompass started");
-            lazycompass_tui::run(config)?;
+            lazycompass_tui::run(config, dangerously_enable_write, allow_pipeline_writes)?;
         }
     }
 
@@ -170,12 +192,12 @@ mod tests {
 
     #[test]
     fn dispatch_routes_to_tui_when_no_subcommand() {
-        let cli = Cli::parse_from(["lazycompass", "--write-enabled"]);
+        let cli = Cli::parse_from(["lazycompass", "--dangerously-enable-write"]);
         let action = dispatch(cli);
         assert!(matches!(
             action,
             AppAction::Tui {
-                write_enabled: true,
+                dangerously_enable_write: true,
                 allow_pipeline_writes: false,
                 allow_insecure: false,
             }
@@ -186,7 +208,7 @@ mod tests {
     fn dispatch_routes_insert_with_global_flags() {
         let cli = Cli::parse_from([
             "lazycompass",
-            "--write-enabled",
+            "--dangerously-enable-write",
             "--allow-pipeline-writes",
             "insert",
             "--collection",
@@ -198,8 +220,31 @@ mod tests {
         assert!(matches!(
             action,
             AppAction::Insert {
-                write_enabled: true,
+                dangerously_enable_write: true,
                 allow_pipeline_writes: true,
+                allow_insecure: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn dispatch_routes_insert_with_yolo_alias() {
+        let cli = Cli::parse_from([
+            "lazycompass",
+            "--yolo",
+            "insert",
+            "--collection",
+            "users",
+            "--document",
+            "{}",
+        ]);
+        let action = dispatch(cli);
+        assert!(matches!(
+            action,
+            AppAction::Insert {
+                dangerously_enable_write: true,
+                allow_pipeline_writes: false,
                 allow_insecure: false,
                 ..
             }
