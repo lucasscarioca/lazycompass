@@ -1500,6 +1500,12 @@ mod tests {
     }
 
     fn test_terminal() -> Terminal<CrosstermBackend<Stdout>> {
-        Terminal::new(CrosstermBackend::new(stdout())).expect("terminal")
+        Terminal::with_options(
+            CrosstermBackend::new(stdout()),
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Fixed(Rect::new(0, 0, 80, 24)),
+            },
+        )
+        .expect("terminal")
     }
 }
