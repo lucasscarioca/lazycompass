@@ -6,6 +6,10 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-03-02
+
+- Release: start the `0.9.x` stabilization phase toward `1.0`, with follow-up work focused on tests, hardening, docs, and validation.
+
 - Breaking: remove config-based write controls; `read_only` and `allow_pipeline_writes` are now rejected in config, and write sessions must opt in per run with `--dangerously-enable-write` or `--yolo`.
 - TUI: add inline query/aggregation drafts so users can edit, run, retry, and save specs after validating results.
 - TUI: add export-to-file and copy-to-clipboard for applied query/aggregation results, with JSON/CSV/table formats and single-document export from the document view.

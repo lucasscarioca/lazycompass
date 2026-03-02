@@ -5,8 +5,8 @@
 3) Run checks:
 
 ```bash
-cargo fmt
-cargo clippy --workspace
+cargo fmt --check
+cargo clippy --workspace -- -D warnings
 cargo test --workspace
 ```
 
@@ -19,7 +19,7 @@ cargo build --workspace
 5) Tag the release:
 
 ```bash
-git tag -a v0.5.0 -m "v0.5.0"
+git tag -a v0.9.0 -m "v0.9.0"
 ```
 
-Security hardening: run the checklist in `SECURITY.md` for any dependency or config changes.
+Security hardening: for releases that change dependencies, config, or security-sensitive behavior, do an explicit security review before publishing.
