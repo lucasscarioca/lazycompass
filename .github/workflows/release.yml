@@ -4,13 +4,36 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to publish"
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 permissions:
   contents: write
 
 jobs:
+  create_release:
+    name: create release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" --title "$RELEASE_TAG" --notes ""
+
   build:
     name: build (${{ matrix.target }})
+    needs: create_release
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -29,6 +52,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -73,14 +98,12 @@ jobs:
             --detach-sign ${{ matrix.archive }}.sha256
 
       - name: Upload release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            ${{ matrix.archive }}
-            ${{ matrix.archive }}.sha256
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE_TAG" ${{ matrix.archive }} ${{ matrix.archive }}.sha256 --clobber
 
       - name: Upload signature (optional)
         if: ${{ steps.import_gpg.outputs.fingerprint != '' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ matrix.archive }}.sha256.sig
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE_TAG" ${{ matrix.archive }}.sha256.sig --clobber
