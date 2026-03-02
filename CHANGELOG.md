@@ -12,7 +12,9 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 - Security: harden upgrade/install to stop consulting cwd installer scripts, restrict installer downloads to GitHub raw repo paths, and require release checksums during install.
 - Security: cap query/aggregation result sets at 10,000 documents and neutralize CSV formula cells during export/copy.
 - Security: reject insecure Mongo connections by default at runtime unless `--allow-insecure` is set, and avoid full TUI rendering for oversized documents/indexes.
+- CI: add `cargo-audit` coverage so dependency advisories fail visibly during validation.
 - Config: restrict `logging.file` to paths under the global config directory.
+- Docs: add a pre-v1 hardening summary without tagging `1.0`.
 
 ## [0.9.0] - 2026-03-02
 

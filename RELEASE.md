@@ -25,3 +25,5 @@ git tag -a v<version> -m "v<version>"
 Use the same version in crate manifests, the tag, and the release notes.
 
 Security hardening: for releases that change dependencies, config, or security-sensitive behavior, do an explicit security review before publishing.
+
+Pre-v1 note: use [PRE_V1_HARDENING.md](./PRE_V1_HARDENING.md) as the working security summary during `0.9.x`. Do not treat it as a `1.0` release announcement.
