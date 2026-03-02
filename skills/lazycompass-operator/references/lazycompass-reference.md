@@ -16,7 +16,7 @@
 - Writes are disabled by default on every run.
 - Do not use `--dangerously-enable-write` or `--yolo` unless mutation is requested.
 - Never run aggregation write stages (`$out`, `$merge`) unless user explicitly requests them and command includes `--allow-pipeline-writes`.
-- Without `--dangerously-enable-write`, DB writes are blocked and log-file writes fall back to stderr.
+- Without `--dangerously-enable-write`, DB writes are blocked.
 - `-o/--output` writes query/aggregation results to a file and is allowed for read-only query work.
 
 Write controls:
@@ -65,6 +65,17 @@ Open TUI:
 lazycompass
 ```
 
+Inspect command surface:
+
+```bash
+lazycompass --help
+lazycompass query --help
+lazycompass agg --help
+lazycompass indexes --help
+lazycompass config --help
+lazycompass upgrade --help
+```
+
 Setup and config:
 
 ```bash
@@ -76,11 +87,13 @@ lazycompass config add-connection
 Read operations:
 
 ```bash
-lazycompass query <saved_id> [--db <db>] [--collection <collection>] [--connection <name>] [--table] [-o <path>]
-lazycompass query --db <db> --collection <collection> [--filter '<json>'] [--projection '<json>'] [--sort '<json>'] [--limit <n>] [--connection <name>] [--table] [-o <path>]
+lazycompass indexes --collection <collection> [--db <db>] [--connection <name>] [--table|--csv] [-o <path>]
 
-lazycompass agg <saved_id> [--db <db>] [--collection <collection>] [--connection <name>] [--table] [-o <path>]
-lazycompass agg --db <db> --collection <collection> --pipeline '<json array>' [--connection <name>] [--table] [-o <path>]
+lazycompass query <saved_id> [--db <db>] [--collection <collection>] [--connection <name>] [--table|--csv] [-o <path>]
+lazycompass query --db <db> --collection <collection> [--filter '<json>'] [--projection '<json>'] [--sort '<json>'] [--limit <n>] [--connection <name>] [--table|--csv] [-o <path>]
+
+lazycompass agg <saved_id> [--db <db>] [--collection <collection>] [--connection <name>] [--table|--csv] [-o <path>]
+lazycompass agg --db <db> --collection <collection> --pipeline '<json array>' [--connection <name>] [--table|--csv] [-o <path>]
 ```
 
 Write operations (explicit approval only):
@@ -131,7 +144,7 @@ Connection resolution:
 
 Database fallback:
 
-- `query`, `agg`, `insert`, `update` can omit `--db` if selected connection has `default_database`.
+- `indexes`, `query`, `agg`, `insert`, and `update` can omit `--db` if the selected connection has `default_database`.
 
 Saved vs inline:
 
@@ -145,8 +158,9 @@ Saved vs inline:
 Output:
 
 - Default: pretty JSON
-- Optional: `--table`
+- Optional: `--table`, `--csv`
 - File output: `-o/--output <path>`
+- `--help` output provides the current command summaries, examples, and flag descriptions.
 
 ## 5) Saved Spec Formats
 
@@ -182,6 +196,8 @@ Payload must be a JSON array.
 
 ## 6) TUI Feature Map
 
+Use this section only to guide a user who explicitly wants the TUI. Prefer CLI commands for agent work.
+
 Core navigation:
 
 - `j/k` move
@@ -193,6 +209,10 @@ Core navigation:
 
 Documents screen actions:
 
+- `x` export results
+- `y` copy results
+- `R` inline query
+- `S` inline aggregation
 - `i` insert document (write)
 - `e` edit/replace document (write)
 - `d` delete document (write)
@@ -200,6 +220,7 @@ Documents screen actions:
 - `A` save aggregation (local write)
 - `r` run saved query
 - `a` run saved aggregation
+- `I` show indexes
 - `c` clear applied saved query/aggregation
 
 Connections screen:

@@ -1,4 +1,4 @@
 interface:
   display_name: "LazyCompass Operator"
-  short_description: "Safe LazyCompass CLI query operator"
-  default_prompt: "Use $lazycompass-operator to inspect LazyCompass config and run safe read-only CLI queries first; only perform DB writes when explicitly approved."
+  short_description: "Safe LazyCompass CLI operator"
+  default_prompt: "Use $lazycompass-operator to inspect LazyCompass config, read help output, and run safe read-only CLI commands like query, agg, and indexes first; only perform DB writes when explicitly approved."
