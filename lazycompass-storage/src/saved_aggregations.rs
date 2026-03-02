@@ -9,7 +9,7 @@ use crate::{
     saved_common::{
         collect_json_paths, parse_scope_from_saved_id, saved_id_from_path, validate_saved_id,
     },
-    security::{ensure_secure_dir, write_secure_file},
+    security::write_secure_file,
 };
 
 pub fn load_saved_aggregations(
@@ -49,9 +49,6 @@ pub fn write_saved_aggregation(
     if path.exists() && !overwrite {
         anyhow::bail!("saved aggregation '{}' already exists", aggregation.id);
     }
-    if let Some(parent) = path.parent() {
-        ensure_secure_dir(parent)?;
-    }
     let pipeline_json: Value = serde_json::from_str(&aggregation.pipeline)
         .context("saved aggregation pipeline must be valid JSON")?;
     if !pipeline_json.is_array() {
@@ -59,7 +56,7 @@ pub fn write_saved_aggregation(
     }
     let contents = serde_json::to_string_pretty(&pipeline_json)
         .context("unable to serialize saved aggregation")?;
-    write_secure_file(&path, &contents)
+    write_secure_file(&path, &contents, overwrite)
         .with_context(|| format!("unable to write saved aggregation {}", path.display()))?;
     Ok(path)
 }

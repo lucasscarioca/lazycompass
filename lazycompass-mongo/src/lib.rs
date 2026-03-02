@@ -9,6 +9,8 @@ use mongodb::{
 };
 use serde_json::Value;
 
+const MAX_RESULT_DOCUMENTS: usize = 10_000;
+
 #[derive(Debug, Clone)]
 pub struct QuerySpec {
     pub connection: Option<String>,
@@ -141,10 +143,14 @@ impl MongoExecutor {
                     spec.database, spec.collection
                 )
             })?;
-        let documents = cursor
-            .try_collect()
-            .await
-            .context("failed to load query results")?;
+        let documents = collect_result_documents(
+            cursor,
+            spec.limit
+                .map(|limit| limit.min(MAX_RESULT_DOCUMENTS as u64) as usize)
+                .unwrap_or(MAX_RESULT_DOCUMENTS),
+            "query",
+        )
+        .await?;
         Ok(documents)
     }
 
@@ -174,10 +180,8 @@ impl MongoExecutor {
                     spec.database, spec.collection
                 )
             })?;
-        let documents = cursor
-            .try_collect()
-            .await
-            .context("failed to load aggregation results")?;
+        let documents =
+            collect_result_documents(cursor, MAX_RESULT_DOCUMENTS, "aggregation").await?;
         Ok(documents)
     }
 
@@ -354,6 +358,32 @@ async fn connect(config: &Config, connection: &ConnectionSpec) -> Result<Client>
     options.connect_timeout = Some(config.connect_timeout());
     options.server_selection_timeout = Some(config.connect_timeout());
     Client::with_options(options).with_context(|| format!("unable to connect to {redacted_uri}"))
+}
+
+async fn collect_result_documents(
+    mut cursor: mongodb::Cursor<Document>,
+    max_documents: usize,
+    operation: &str,
+) -> Result<Vec<Document>> {
+    let mut documents = Vec::new();
+    while let Some(document) = cursor
+        .try_next()
+        .await
+        .with_context(|| format!("failed to load {operation} results"))?
+    {
+        ensure_result_limit(documents.len(), max_documents, operation)?;
+        documents.push(document);
+    }
+    Ok(documents)
+}
+
+fn ensure_result_limit(current_len: usize, max_documents: usize, operation: &str) -> Result<()> {
+    if current_len >= max_documents {
+        anyhow::bail!(
+            "{operation} result set exceeded the safety cap of {max_documents} documents; narrow the scope or add a limit"
+        );
+    }
+    Ok(())
 }
 
 fn normalize_json_option(value: Option<String>) -> Option<String> {
@@ -628,5 +658,12 @@ mod tests {
     fn ensure_document_deleted_requires_existing_document() {
         let err = ensure_document_deleted(0, "app", "users").expect_err("expected not found");
         assert!(err.to_string().contains("document not found in app.users"));
+    }
+
+    #[test]
+    fn ensure_result_limit_rejects_oversized_results() {
+        let err = ensure_result_limit(MAX_RESULT_DOCUMENTS, MAX_RESULT_DOCUMENTS, "query")
+            .expect_err("expected safety cap error");
+        assert!(err.to_string().contains("safety cap"));
     }
 }

@@ -8,6 +8,10 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 - Docs: harden cross-links between markdown files, retarget stale repo guidance to existing docs, and sync the playground QA guide with current write-safety behavior.
 - CLI: expand `--help` output with clearer command summaries, safer flag descriptions, and compact examples for both users and agents.
+- Security: harden storage writes against symlink traversal and non-atomic saves; isolate repo/global `.env` resolution; require secure temp files for CLI edit flows.
+- Security: harden upgrade/install to stop consulting cwd installer scripts, restrict installer downloads to GitHub raw repo paths, and require release checksums during install.
+- Security: cap query/aggregation result sets at 10,000 documents and neutralize CSV formula cells during export/copy.
+- Config: restrict `logging.file` to paths under the global config directory.
 
 ## [0.9.0] - 2026-03-02
 

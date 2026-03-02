@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 APP="lazycompass"
 
@@ -129,6 +130,14 @@ resolve_repo_from_git() {
   return 1
 }
 
+validate_repo() {
+  local repo=$1
+  if [[ ! "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+    echo -e "${RED}Error: invalid repo '${repo}', expected owner/repo${NC}" >&2
+    exit 1
+  fi
+}
+
 install_from_binary() {
   if [ ! -f "$binary_path" ]; then
     echo -e "${RED}Error: Binary not found at ${binary_path}${NC}" >&2
@@ -240,6 +249,7 @@ verify_signature() {
 
 download_and_install() {
   local repo=$1
+  validate_repo "$repo"
   local target
   target=$(detect_target)
   local asset="${APP}-${target}.tar.gz"
@@ -274,23 +284,23 @@ download_and_install() {
     print_message info "${MUTED}Version:${NC} $version"
   fi
 
-  local tmp_dir="${TMPDIR:-/tmp}/lazycompass_install_$$"
-  mkdir -p "$tmp_dir"
+  local tmp_dir
+  tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/lazycompass_install.XXXXXX")
   curl -# -L -o "$tmp_dir/$asset" "$url"
 
   local checksum_file="$tmp_dir/${asset}.sha256"
   local checksum_sig_file="$tmp_dir/${asset}.sha256.sig"
-  if curl -fsL -o "$checksum_file" "$checksum_url"; then
-    print_message info "${MUTED}Verifying checksum...${NC}"
-    verify_checksum "$checksum_file" "$tmp_dir/$asset"
-    if curl -fsL -o "$checksum_sig_file" "$checksum_sig_url"; then
-      print_message info "${MUTED}Verifying checksum signature...${NC}"
-      verify_signature "$checksum_file" "$checksum_sig_file"
-    else
-      print_message warning "Checksum signature unavailable; skipping signature verification."
-    fi
+  if ! curl -fsL -o "$checksum_file" "$checksum_url"; then
+    echo -e "${RED}Error: checksum unavailable for ${asset}${NC}" >&2
+    exit 1
+  fi
+  print_message info "${MUTED}Verifying checksum...${NC}"
+  verify_checksum "$checksum_file" "$tmp_dir/$asset"
+  if curl -fsL -o "$checksum_sig_file" "$checksum_sig_url"; then
+    print_message info "${MUTED}Verifying checksum signature...${NC}"
+    verify_signature "$checksum_file" "$checksum_sig_file"
   else
-    print_message warning "Checksum unavailable; skipping verification."
+    print_message warning "Checksum signature unavailable; skipping signature verification."
   fi
 
   tar -xzf "$tmp_dir/$asset" -C "$tmp_dir"

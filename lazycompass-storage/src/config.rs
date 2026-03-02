@@ -1,18 +1,23 @@
 use anyhow::{Context, Result};
 use lazycompass_core::{Config, LoggingConfig, TimeoutConfig};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use toml::Value;
 
 use crate::ConfigPaths;
 
 pub fn load_config(paths: &ConfigPaths) -> Result<Config> {
+    let global_path = paths.global_config_path();
+    let global_env = load_dotenv_values_for_config(&global_path)?;
+    let global = read_config(&global_path, &global_env)?;
     let repo = match paths.repo_config_path() {
-        Some(path) => read_config(&path)?,
+        Some(path) => {
+            let repo_env = load_dotenv_values_for_config(&path)?;
+            read_config(&path, &repo_env)?
+        }
         None => Config::default(),
     };
-    let global = read_config(&paths.global_config_path())?;
 
     Ok(merge_config(global, repo))
 }
@@ -25,12 +30,24 @@ pub fn log_file_path(paths: &ConfigPaths, config: &Config) -> PathBuf {
     }
 }
 
-fn read_config(path: &Path) -> Result<Config> {
-    if !path.is_file() {
-        return Ok(Config::default());
+fn read_config(path: &Path, dotenv: &HashMap<String, String>) -> Result<Config> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            anyhow::bail!("refusing to load symlinked config file {}", path.display());
+        }
+        Ok(metadata) if !metadata.is_file() => {
+            return Ok(Config::default());
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Config::default());
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("unable to inspect config file {}", path.display()));
+        }
     }
 
-    load_dotenv_for_config(path)?;
     let contents = fs::read_to_string(path)
         .with_context(|| format!("unable to read config file {}", path.display()))?;
     let value: Value = toml::from_str(&contents)
@@ -39,10 +56,50 @@ fn read_config(path: &Path) -> Result<Config> {
     let mut config: Config = value
         .try_into()
         .with_context(|| format!("invalid TOML in config file {}", path.display()))?;
-    resolve_env_vars(&mut config, path)?;
+    resolve_env_vars(&mut config, path, dotenv)?;
     validate_config(&config)
         .with_context(|| format!("invalid config data in {}", path.display()))?;
     Ok(config)
+}
+
+fn load_dotenv_values_for_config(path: &Path) -> Result<HashMap<String, String>> {
+    let Some(dotenv_path) = dotenv_path_for_config(path) else {
+        return Ok(HashMap::new());
+    };
+
+    match fs::symlink_metadata(&dotenv_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            anyhow::bail!(
+                "refusing to load symlinked .env file {}",
+                dotenv_path.display()
+            );
+        }
+        Ok(metadata) if !metadata.is_file() => return Ok(HashMap::new()),
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("unable to inspect .env file {}", dotenv_path.display()));
+        }
+    }
+
+    let mut values = HashMap::new();
+    let iter = dotenvy::from_path_iter(&dotenv_path)
+        .with_context(|| format!("unable to read .env file {}", dotenv_path.display()))?;
+    for item in iter {
+        let (key, value) =
+            item.with_context(|| format!("invalid .env entry in {}", dotenv_path.display()))?;
+        values.entry(key).or_insert(value);
+    }
+    Ok(values)
+}
+
+fn dotenv_path_for_config(path: &Path) -> Option<PathBuf> {
+    let parent = path.parent()?;
+    if parent.file_name().and_then(|name| name.to_str()) == Some(".lazycompass") {
+        return parent.parent().map(|root| root.join(".env"));
+    }
+    Some(parent.join(".env"))
 }
 
 fn reject_removed_keys(value: &Value) -> Result<()> {
@@ -64,28 +121,11 @@ fn reject_removed_keys(value: &Value) -> Result<()> {
     Ok(())
 }
 
-fn load_dotenv_for_config(path: &Path) -> Result<()> {
-    let Some(dotenv_path) = dotenv_path_for_config(path) else {
-        return Ok(());
-    };
-
-    if dotenv_path.is_file() {
-        dotenvy::from_path(&dotenv_path)
-            .with_context(|| format!("unable to read .env file {}", dotenv_path.display()))?;
-    }
-
-    Ok(())
-}
-
-fn dotenv_path_for_config(path: &Path) -> Option<PathBuf> {
-    let parent = path.parent()?;
-    if parent.file_name().and_then(|name| name.to_str()) == Some(".lazycompass") {
-        return parent.parent().map(|root| root.join(".env"));
-    }
-    Some(parent.join(".env"))
-}
-
-fn resolve_env_vars(config: &mut Config, path: &Path) -> Result<()> {
+fn resolve_env_vars(
+    config: &mut Config,
+    path: &Path,
+    dotenv: &HashMap<String, String>,
+) -> Result<()> {
     for (index, connection) in config.connections.iter_mut().enumerate() {
         if connection.uri.contains("${") {
             let label = if connection.name.trim().is_empty() {
@@ -93,7 +133,7 @@ fn resolve_env_vars(config: &mut Config, path: &Path) -> Result<()> {
             } else {
                 format!("connection '{}'", connection.name)
             };
-            let resolved = interpolate_env_value(&connection.uri).map_err(|error| {
+            let resolved = interpolate_env_value(&connection.uri, dotenv).map_err(|error| {
                 anyhow::anyhow!(
                     "config {}: unable to resolve env vars in {label} uri: {error}",
                     path.display()
@@ -106,7 +146,7 @@ fn resolve_env_vars(config: &mut Config, path: &Path) -> Result<()> {
     if let Some(file) = config.logging.file.as_deref()
         && file.contains("${")
     {
-        let resolved = interpolate_env_value(file).map_err(|error| {
+        let resolved = interpolate_env_value(file, dotenv).map_err(|error| {
             anyhow::anyhow!(
                 "config {}: unable to resolve env vars in logging.file: {error}",
                 path.display()
@@ -118,7 +158,7 @@ fn resolve_env_vars(config: &mut Config, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn interpolate_env_value(value: &str) -> Result<String> {
+fn interpolate_env_value(value: &str, dotenv: &HashMap<String, String>) -> Result<String> {
     let mut output = String::with_capacity(value.len());
     let mut remainder = value;
 
@@ -132,14 +172,20 @@ fn interpolate_env_value(value: &str) -> Result<String> {
         if name.trim().is_empty() {
             anyhow::bail!("empty env var placeholder");
         }
-        let value = std::env::var(name)
-            .map_err(|_| anyhow::anyhow!("missing environment variable '{name}'"))?;
+        let value = resolve_env_value(name, dotenv)
+            .ok_or_else(|| anyhow::anyhow!("missing environment variable '{name}'"))?;
         output.push_str(&value);
         remainder = &rest[end + 1..];
     }
 
     output.push_str(remainder);
     Ok(output)
+}
+
+fn resolve_env_value(name: &str, dotenv: &HashMap<String, String>) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .or_else(|| dotenv.get(name).cloned())
 }
 
 fn validate_config(config: &Config) -> Result<()> {
@@ -175,6 +221,31 @@ fn validate_config(config: &Config) -> Result<()> {
     {
         anyhow::bail!("logging max_backups must be greater than 0");
     }
+    if let Some(file) = config.logging.file.as_deref() {
+        validate_logging_file(file)?;
+    }
+    Ok(())
+}
+
+fn validate_logging_file(path: &str) -> Result<()> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("logging.file cannot be empty");
+    }
+
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        anyhow::bail!("logging.file must be relative to the global config directory");
+    }
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        anyhow::bail!("logging.file must stay within the global config directory");
+    }
+
     Ok(())
 }
 
@@ -675,6 +746,85 @@ uri = "${{{var_name}}}"
         unsafe {
             std::env::remove_var(&var_name);
         }
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn load_config_does_not_leak_repo_dotenv_into_global_config() -> Result<()> {
+        let root = temp_root("config_dotenv_isolation");
+        let global_root = root.join("global");
+        let repo_root = root.join("repo");
+        let suffix = unique_env_suffix();
+        let global_var = format!("LAZYCOMPASS_GLOBAL_DOTENV_{suffix}");
+        let repo_var = format!("LAZYCOMPASS_REPO_DOTENV_{suffix}");
+
+        write_file(
+            &global_root.join(".env"),
+            &format!("{global_var}=mongodb://global-from-dotenv\n"),
+        );
+        write_file(
+            &global_root.join("config.toml"),
+            &format!(
+                r#"[[connections]]
+name = "global"
+uri = "${{{global_var}}}"
+"#
+            ),
+        );
+        write_file(
+            &repo_root.join(".env"),
+            &format!("{repo_var}=mongodb://repo-from-dotenv\n"),
+        );
+        write_file(
+            &repo_root.join(".lazycompass/config.toml"),
+            &format!(
+                r#"[[connections]]
+name = "repo"
+uri = "${{{repo_var}}}"
+"#
+            ),
+        );
+
+        let config = load_config(&ConfigPaths {
+            global_root,
+            repo_root: Some(repo_root),
+        })?;
+        assert_eq!(config.connections.len(), 2);
+        assert!(config.connections.iter().any(|connection| {
+            connection.name == "global" && connection.uri == "mongodb://global-from-dotenv"
+        }));
+        assert!(config.connections.iter().any(|connection| {
+            connection.name == "repo" && connection.uri == "mongodb://repo-from-dotenv"
+        }));
+
+        unsafe {
+            std::env::remove_var(&global_var);
+            std::env::remove_var(&repo_var);
+        }
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn load_config_rejects_logging_path_outside_global_root() -> Result<()> {
+        let root = temp_root("config_logging_path");
+        let global_root = root.join("global");
+
+        write_file(
+            &global_root.join("config.toml"),
+            r#"[logging]
+file = "../outside.log"
+"#,
+        );
+
+        let err = load_config(&ConfigPaths {
+            global_root,
+            repo_root: None,
+        })
+        .expect_err("expected invalid logging path");
+        assert!(err.to_string().contains("invalid config data"));
+
         let _ = fs::remove_dir_all(&root);
         Ok(())
     }

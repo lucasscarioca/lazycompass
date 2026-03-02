@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use lazycompass_core::redact_sensitive_text;
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -36,12 +36,35 @@ pub(crate) fn normalize_permissions(paths: &ConfigPaths) {
 #[cfg(not(unix))]
 pub(crate) fn normalize_permissions(_paths: &ConfigPaths) {}
 
-pub(crate) fn ensure_secure_dir(path: &Path) -> Result<()> {
-    fs::create_dir_all(path)
-        .with_context(|| format!("unable to create directory {}", path.display()))?;
-    set_dir_permissions(path)?;
+pub fn ensure_secure_dir(path: &Path) -> Result<()> {
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                let file_type = metadata.file_type();
+                if file_type.is_symlink() {
+                    anyhow::bail!("refusing to use symlinked directory {}", current.display());
+                }
+                if !file_type.is_dir() {
+                    anyhow::bail!("path {} exists and is not a directory", current.display());
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&current)
+                    .with_context(|| format!("unable to create directory {}", current.display()))?;
+                set_dir_permissions(&current)?;
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("unable to inspect directory {}", current.display()));
+            }
+        }
+    }
+
     if let Some(parent) = path.parent()
         && is_config_root_dir(parent)
+        && !is_symlink(parent)
     {
         set_dir_permissions(parent)?;
     }
@@ -55,28 +78,118 @@ fn is_config_root_dir(path: &Path) -> bool {
     )
 }
 
-pub(crate) fn write_secure_file(path: &Path, contents: &str) -> Result<()> {
+pub fn write_secure_file(path: &Path, contents: &str, overwrite: bool) -> Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        anyhow::anyhow!("unable to resolve parent directory for {}", path.display())
+    })?;
+    ensure_secure_dir(parent)?;
+    validate_target_file(path, overwrite)?;
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
+        let temp_path = unique_temp_path(parent, path);
         let mut file = fs::OpenOptions::new()
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .write(true)
             .mode(FILE_MODE)
-            .open(path)
-            .with_context(|| format!("unable to open file {}", path.display()))?;
+            .open(&temp_path)
+            .with_context(|| format!("unable to open file {}", temp_path.display()))?;
         file.write_all(contents.as_bytes())
-            .with_context(|| format!("unable to write file {}", path.display()))?;
-        set_file_permissions(path)?;
+            .with_context(|| format!("unable to write file {}", temp_path.display()))?;
+        file.sync_all()
+            .with_context(|| format!("unable to sync file {}", temp_path.display()))?;
+        drop(file);
+        set_file_permissions(&temp_path)?;
+        rename_atomic(&temp_path, path, overwrite)?;
         Ok(())
     }
     #[cfg(not(unix))]
     {
-        fs::write(path, contents)
-            .with_context(|| format!("unable to write file {}", path.display()))?;
+        let temp_path = unique_temp_path(parent, path);
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)
+            .with_context(|| format!("unable to open file {}", temp_path.display()))?;
+        file.write_all(contents.as_bytes())
+            .with_context(|| format!("unable to write file {}", temp_path.display()))?;
+        drop(file);
+        rename_atomic(&temp_path, path, overwrite)?;
         Ok(())
     }
+}
+
+fn validate_target_file(path: &Path, overwrite: bool) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            let file_type = metadata.file_type();
+            if file_type.is_symlink() {
+                anyhow::bail!("refusing to use symlinked file {}", path.display());
+            }
+            if !file_type.is_file() {
+                anyhow::bail!("path {} exists and is not a file", path.display());
+            }
+            if !overwrite {
+                anyhow::bail!("file {} already exists", path.display());
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            Err(error).with_context(|| format!("unable to inspect file {}", path.display()))
+        }
+    }
+}
+
+fn unique_temp_path(parent: &Path, target: &Path) -> PathBuf {
+    let file_name = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("lazycompass.tmp");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let pid = std::process::id();
+    parent.join(format!(".{file_name}.{pid}.{nonce}.tmp"))
+}
+
+fn rename_atomic(temp_path: &Path, path: &Path, overwrite: bool) -> Result<()> {
+    #[cfg(unix)]
+    {
+        let _ = overwrite;
+        fs::rename(temp_path, path).with_context(|| {
+            format!(
+                "unable to move temporary file {} into {}",
+                temp_path.display(),
+                path.display()
+            )
+        })?;
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    {
+        if overwrite && path.exists() {
+            fs::remove_file(path)
+                .with_context(|| format!("unable to replace existing file {}", path.display()))?;
+        }
+        fs::rename(temp_path, path).with_context(|| {
+            format!(
+                "unable to move temporary file {} into {}",
+                temp_path.display(),
+                path.display()
+            )
+        })?;
+        Ok(())
+    }
+}
+
+fn is_symlink(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 #[cfg(unix)]
@@ -105,7 +218,10 @@ fn set_file_permissions(_path: &Path) -> Result<()> {
 
 #[cfg(unix)]
 fn normalize_dir_if_exists(path: &Path) -> Result<()> {
-    if path.is_dir() {
+    if let Ok(metadata) = fs::symlink_metadata(path)
+        && metadata.is_dir()
+        && !metadata.file_type().is_symlink()
+    {
         set_dir_permissions(path)?;
     }
     Ok(())
@@ -113,7 +229,10 @@ fn normalize_dir_if_exists(path: &Path) -> Result<()> {
 
 #[cfg(unix)]
 fn normalize_file_if_exists(path: &Path) -> Result<()> {
-    if path.is_file() {
+    if let Ok(metadata) = fs::symlink_metadata(path)
+        && metadata.is_file()
+        && !metadata.file_type().is_symlink()
+    {
         set_file_permissions(path)?;
     }
     Ok(())
@@ -154,37 +273,53 @@ pub(crate) fn permission_warnings(_paths: &ConfigPaths) -> Vec<String> {
 
 #[cfg(unix)]
 fn append_permission_warning_dir(path: &Path, warnings: &mut Vec<String>) {
-    if !path.is_dir() {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return;
+    };
+    if metadata.file_type().is_symlink() {
+        warnings.push(redact_sensitive_text(&format!(
+            "permission warning: directory {} is a symlink",
+            path.display()
+        )));
         return;
     }
-    if let Ok(metadata) = fs::metadata(path) {
-        let mode = metadata.mode() & 0o777;
-        if (mode & 0o077) != 0 {
-            warnings.push(redact_sensitive_text(&format!(
-                "permission warning: directory {} has mode {:03o}, expected {:03o}",
-                path.display(),
-                mode,
-                DIR_MODE
-            )));
-        }
+    if !metadata.is_dir() {
+        return;
+    }
+    let mode = metadata.mode() & 0o777;
+    if (mode & 0o077) != 0 {
+        warnings.push(redact_sensitive_text(&format!(
+            "permission warning: directory {} has mode {:03o}, expected {:03o}",
+            path.display(),
+            mode,
+            DIR_MODE
+        )));
     }
 }
 
 #[cfg(unix)]
 fn append_permission_warning_file(path: &Path, warnings: &mut Vec<String>) {
-    if !path.is_file() {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return;
+    };
+    if metadata.file_type().is_symlink() {
+        warnings.push(redact_sensitive_text(&format!(
+            "permission warning: file {} is a symlink",
+            path.display()
+        )));
         return;
     }
-    if let Ok(metadata) = fs::metadata(path) {
-        let mode = metadata.mode() & 0o777;
-        if (mode & 0o077) != 0 {
-            warnings.push(redact_sensitive_text(&format!(
-                "permission warning: file {} has mode {:03o}, expected {:03o}",
-                path.display(),
-                mode,
-                FILE_MODE
-            )));
-        }
+    if !metadata.is_file() {
+        return;
+    }
+    let mode = metadata.mode() & 0o777;
+    if (mode & 0o077) != 0 {
+        warnings.push(redact_sensitive_text(&format!(
+            "permission warning: file {} has mode {:03o}, expected {:03o}",
+            path.display(),
+            mode,
+            FILE_MODE
+        )));
     }
 }
 
@@ -202,7 +337,7 @@ mod tests {
     use anyhow::Result;
     use std::fs;
 
-    use super::{normalize_permissions, permission_warnings};
+    use super::{ensure_secure_dir, normalize_permissions, permission_warnings, write_secure_file};
     use crate::{ConfigPaths, test_support::write_file};
 
     #[cfg(unix)]
@@ -220,13 +355,12 @@ mod tests {
 
         let repo_root = root.join("repo");
         let repo_config_root = repo_root.join(".lazycompass");
-        fs::create_dir_all(repo_config_root.join("queries"))?;
-        fs::create_dir_all(repo_config_root.join("aggregations"))?;
+        let queries_dir = repo_config_root.join("queries");
+        let aggregations_dir = repo_config_root.join("aggregations");
+        fs::create_dir_all(&queries_dir)?;
+        fs::create_dir_all(&aggregations_dir)?;
         fs::set_permissions(&repo_config_root, fs::Permissions::from_mode(0o755))?;
-        fs::set_permissions(
-            &repo_config_root.join("queries"),
-            fs::Permissions::from_mode(0o755),
-        )?;
+        fs::set_permissions(&queries_dir, fs::Permissions::from_mode(0o755))?;
         let query_path = repo_config_root.join("queries/query.json");
         write_file(&query_path, "{}\n");
         fs::set_permissions(&query_path, fs::Permissions::from_mode(0o644))?;
@@ -268,17 +402,13 @@ mod tests {
 
         let repo_root = root.join("repo");
         let repo_config_root = repo_root.join(".lazycompass");
-        fs::create_dir_all(repo_config_root.join("queries"))?;
-        fs::create_dir_all(repo_config_root.join("aggregations"))?;
+        let queries_dir = repo_config_root.join("queries");
+        let aggregations_dir = repo_config_root.join("aggregations");
+        fs::create_dir_all(&queries_dir)?;
+        fs::create_dir_all(&aggregations_dir)?;
         fs::set_permissions(&repo_config_root, fs::Permissions::from_mode(0o755))?;
-        fs::set_permissions(
-            &repo_config_root.join("queries"),
-            fs::Permissions::from_mode(0o755),
-        )?;
-        fs::set_permissions(
-            &repo_config_root.join("aggregations"),
-            fs::Permissions::from_mode(0o755),
-        )?;
+        fs::set_permissions(&queries_dir, fs::Permissions::from_mode(0o755))?;
+        fs::set_permissions(&aggregations_dir, fs::Permissions::from_mode(0o755))?;
         let query_path = repo_config_root.join("queries/query.json");
         write_file(&query_path, "{}\n");
         fs::set_permissions(&query_path, fs::Permissions::from_mode(0o644))?;
@@ -294,6 +424,42 @@ mod tests {
         let warnings = permission_warnings(&paths);
 
         assert!(warnings.is_empty());
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_secure_dir_rejects_symlinked_directories() -> Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let root = crate::test_support::temp_root("secure_dir_symlink");
+        let target = root.join("target");
+        fs::create_dir_all(&target)?;
+        let link = root.join("link");
+        symlink(&target, &link)?;
+
+        let err = ensure_secure_dir(&link).expect_err("expected symlink rejection");
+        assert!(err.to_string().contains("symlinked directory"));
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_secure_file_rejects_symlinked_targets() -> Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let root = crate::test_support::temp_root("secure_file_symlink");
+        let target = root.join("target.txt");
+        write_file(&target, "before");
+        let link = root.join("config.toml");
+        symlink(&target, &link)?;
+
+        let err = write_secure_file(&link, "after", true).expect_err("expected symlink rejection");
+        assert!(err.to_string().contains("symlinked file"));
 
         let _ = fs::remove_dir_all(&root);
         Ok(())

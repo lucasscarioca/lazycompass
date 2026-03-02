@@ -4,7 +4,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub(crate) fn collect_json_paths(dir: &Path) -> Result<Vec<PathBuf>> {
-    if !dir.is_dir() {
+    let Ok(metadata) = fs::symlink_metadata(dir) else {
+        return Ok(Vec::new());
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Ok(Vec::new());
     }
 
@@ -15,7 +18,13 @@ pub(crate) fn collect_json_paths(dir: &Path) -> Result<Vec<PathBuf>> {
         let entry = entry
             .with_context(|| format!("unable to read directory entry in {}", dir.display()))?;
         let path = entry.path();
-        if path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !metadata.file_type().is_symlink()
+            && metadata.is_file()
+            && path.extension().and_then(|ext| ext.to_str()) == Some("json")
+        {
             paths.push(path);
         }
     }

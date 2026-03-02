@@ -1,14 +1,12 @@
 use anyhow::{Context, Result};
 use lazycompass_storage::{
     ConfigPaths, append_connection_to_global_config, append_connection_to_repo_config,
+    ensure_secure_dir, write_secure_file,
 };
-use std::env;
 use std::fs;
-use std::io::Write;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cli::{ConfigArgs, ConfigCommands};
-use crate::editor::open_in_editor;
+use crate::editor::{create_secure_temp_file, open_in_editor};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ConfigScope {
@@ -48,8 +46,7 @@ fn run_config_edit(paths: &ConfigPaths, scope: ConfigScope) -> Result<()> {
     };
 
     if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("unable to create config directory {}", parent.display()))?;
+        ensure_secure_dir(parent)?;
     }
 
     if !config_path.exists() {
@@ -82,7 +79,7 @@ fn run_config_edit(paths: &ConfigPaths, scope: ConfigScope) -> Result<()> {
 # lazycompass --dangerously-enable-write …
 # lazycompass --dangerously-enable-write --allow-pipeline-writes …
 "#;
-        fs::write(&config_path, default_config)
+        write_secure_file(&config_path, default_config, false)
             .with_context(|| format!("unable to create config file {}", config_path.display()))?;
     }
 
@@ -110,18 +107,7 @@ uri = "mongodb://localhost:27017"
 default_database = "mydb"
 "#;
 
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    let temp_path = env::temp_dir().join(format!("lazycompass_connection_{nonce}.toml"));
-
-    {
-        let mut file = fs::File::create(&temp_path)
-            .with_context(|| format!("unable to create temp file {}", temp_path.display()))?;
-        file.write_all(template.as_bytes())
-            .with_context(|| format!("unable to write temp file {}", temp_path.display()))?;
-    }
+    let temp_path = create_secure_temp_file("connection", "toml", template)?;
 
     open_in_editor(&temp_path)?;
 

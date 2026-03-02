@@ -223,8 +223,17 @@ fn format_csv_value(value: &Bson) -> String {
 }
 
 fn escape_csv_cell(value: &str) -> String {
+    let value = neutralize_csv_formula(value);
     if value.contains([',', '"', '\n', '\r']) {
         format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value
+    }
+}
+
+fn neutralize_csv_formula(value: &str) -> String {
+    if value.starts_with(['=', '+', '-', '@']) {
+        format!("'{value}")
     } else {
         value.to_string()
     }
@@ -337,6 +346,17 @@ mod tests {
         let output = render_documents(OutputFormat::Csv, &documents).expect("render csv");
 
         assert_eq!(output, "text\n\"hello,\"\"world\"\"\nnext\"");
+    }
+
+    #[test]
+    fn render_csv_neutralizes_formula_cells() {
+        let documents = vec![document(vec![(
+            "text",
+            Bson::String("=HYPERLINK(\"https://example.com\")".to_string()),
+        )])];
+        let output = render_documents(OutputFormat::Csv, &documents).expect("render csv");
+
+        assert_eq!(output, "text\n\"'=HYPERLINK(\"\"https://example.com\"\")\"");
     }
 
     #[test]

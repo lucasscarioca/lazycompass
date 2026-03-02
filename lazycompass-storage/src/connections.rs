@@ -40,7 +40,7 @@ pub async fn append_connection_to_repo_config(
     config.connections.push(connection.clone());
 
     let contents = toml::to_string_pretty(&config).context("unable to serialize config")?;
-    write_secure_file(&config_path, &contents)
+    write_secure_file(&config_path, &contents, true)
         .with_context(|| format!("unable to write config {}", config_path.display()))?;
 
     Ok(config_path)
@@ -72,7 +72,7 @@ pub async fn append_connection_to_global_config(
     config.connections.push(connection.clone());
 
     let contents = toml::to_string_pretty(&config).context("unable to serialize config")?;
-    write_secure_file(&config_path, &contents)
+    write_secure_file(&config_path, &contents, true)
         .with_context(|| format!("unable to write config {}", config_path.display()))?;
 
     Ok(config_path)

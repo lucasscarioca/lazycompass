@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 pub(crate) const APP_DIR: &str = "lazycompass";
@@ -59,7 +60,7 @@ fn find_repo_root(start: &Path) -> Option<PathBuf> {
     let mut current = Some(start);
 
     while let Some(dir) = current {
-        if dir.join(".lazycompass").is_dir() {
+        if is_real_dir(&dir.join(".lazycompass")) {
             return Some(dir.to_path_buf());
         }
         if dir.join(".git").exists() {
@@ -69,6 +70,12 @@ fn find_repo_root(start: &Path) -> Option<PathBuf> {
     }
 
     None
+}
+
+fn is_real_dir(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

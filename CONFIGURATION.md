@@ -7,7 +7,7 @@ LazyCompass loads config from two locations:
 
 Repo config overrides global. Connections are merged by name; a repo connection replaces a global connection with the same name. Other fields prefer the repo value when set, otherwise fall back to global.
 
-Optional `.env` loading happens before config is parsed. LazyCompass looks for `.env` in the repo root and in `~/.config/lazycompass/` (in that order). Values from the real environment always win over `.env`.
+Optional `.env` loading happens before each config file is parsed. Repo config uses the repo root `.env`; global config uses `~/.config/lazycompass/.env`. Values from the real environment always win over `.env`.
 
 Environment variables can be interpolated with `${VAR}` in:
 
@@ -29,7 +29,7 @@ Defaults:
 - `timeouts.query_ms`: 30000
 - `theme.name`: classic
 - `logging.level`: info
-- `logging.file`: `lazycompass.log` (resolved under the global config dir)
+- `logging.file`: `lazycompass.log` (must stay relative to the global config dir)
 - `logging.max_size_mb`: 10
 - `logging.max_backups`: 3
 
@@ -87,7 +87,12 @@ Accepted values: `classic`, `default`, `ember`. `classic` and `default` are the 
 - `max_size_mb` (integer, optional)
 - `max_backups` (integer, optional)
 
-If `logging.file` is a relative path, it is resolved under `~/.config/lazycompass/`.
+`logging.file` must be a relative path under `~/.config/lazycompass/`. Absolute paths and `..` segments are rejected.
+
+Query and aggregation safety cap:
+
+- Query and aggregation execution stops after 10,000 result documents.
+- Narrow filters/pipelines or add `--limit` for large result sets.
 
 ### TimeoutConfig
 

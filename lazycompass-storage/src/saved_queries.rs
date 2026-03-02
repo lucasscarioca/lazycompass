@@ -9,7 +9,7 @@ use crate::{
     saved_common::{
         collect_json_paths, parse_scope_from_saved_id, saved_id_from_path, validate_saved_id,
     },
-    security::{ensure_secure_dir, write_secure_file},
+    security::write_secure_file,
 };
 
 pub fn load_saved_queries(paths: &ConfigPaths) -> Result<(Vec<SavedQuery>, Vec<String>)> {
@@ -42,12 +42,9 @@ pub fn write_saved_query(
     if path.exists() && !overwrite {
         anyhow::bail!("saved query '{}' already exists", query.id);
     }
-    if let Some(parent) = path.parent() {
-        ensure_secure_dir(parent)?;
-    }
     let contents = serde_json::to_string_pretty(&saved_query_payload(query)?)
         .context("unable to serialize saved query")?;
-    write_secure_file(&path, &contents)
+    write_secure_file(&path, &contents, overwrite)
         .with_context(|| format!("unable to write saved query {}", path.display()))?;
     Ok(path)
 }

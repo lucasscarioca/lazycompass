@@ -34,6 +34,8 @@ Upgrade (re-runs the installer):
 lazycompass upgrade
 ```
 
+Upgrade downloads `install.sh` from `raw.githubusercontent.com` for the official repo by default, or for the repo passed with `--repo`. It does not execute a local `install.sh` from the current directory.
+
 Verification:
 
 - The installer verifies release asset checksums when a `.sha256` file is present.
@@ -94,6 +96,7 @@ Env var naming:
 - `MONGO_URI` is a convention used in docs/examples; `MONGODB_URL` or `DATABASE_URL` also work if config uses that exact name.
 - `.env` is auto-loaded from repo root for repo config and from `~/.config/lazycompass/.env` for global config.
 - Real environment variables take precedence over `.env` values.
+- Query and aggregation execution stops after 10,000 result documents; narrow the scope or add `--limit` for large result sets.
 
 Write actions open your `$VISUAL` or `$EDITOR` for JSON editing (command + args only; no shell expansion).
 
