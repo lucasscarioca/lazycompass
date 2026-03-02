@@ -6,6 +6,8 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+- Docs: harden cross-links between markdown files, retarget stale repo guidance to existing docs, and sync the playground QA guide with current write-safety behavior.
+
 ## [0.9.0] - 2026-03-02
 
 - Release: start the `0.9.x` stabilization phase toward `1.0`, with follow-up work focused on tests, hardening, docs, and validation.

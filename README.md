@@ -6,7 +6,7 @@ LazyCompass is a fast, vim-first MongoDB client for the terminal. It runs as a T
 
 ## Pre-1.0 stability
 
-LazyCompass is pre-1.0. Breaking changes may happen in minor releases until 1.0; see `VERSIONING.md` and `CHANGELOG.md` for details.
+LazyCompass is pre-1.0. Breaking changes may happen in minor releases until 1.0; see [VERSIONING.md](./VERSIONING.md) and [CHANGELOG.md](./CHANGELOG.md) for details.
 
 ## Installation
 
@@ -101,6 +101,8 @@ Documents screen keys: `i` insert, `e` edit, `d` delete, `x` export results, `y`
 
 Applied query/aggregation results can be exported from the TUI as JSON, CSV, or table text. Copy-to-clipboard uses native clipboard commands when available and falls back to OSC52. Result export/copy remains available without `--dangerously-enable-write`.
 
+For local end-to-end validation against the bundled MongoDB playground, see [dev/qa/README.md](./dev/qa/README.md).
+
 Run a saved query or aggregation:
 
 ```bash
@@ -149,19 +151,20 @@ lazycompass --dangerously-enable-write update --collection users --id '{"$oid":"
 
 ## Configuration
 
-See `CONFIGURATION.md` and `QUERY_FORMAT.md` for config and saved query formats.
+See [CONFIGURATION.md](./CONFIGURATION.md) and [QUERY_FORMAT.md](./QUERY_FORMAT.md) for config and saved query formats.
 
 ## Docs
 
-- `CONFIGURATION.md`
-- `QUERY_FORMAT.md`
-- `VERSIONING.md`
-- `RELEASE.md`
-- `CHANGELOG.md`
+- [CONFIGURATION.md](./CONFIGURATION.md)
+- [QUERY_FORMAT.md](./QUERY_FORMAT.md)
+- [VERSIONING.md](./VERSIONING.md)
+- [RELEASE.md](./RELEASE.md)
+- [CHANGELOG.md](./CHANGELOG.md)
+- [dev/qa/README.md](./dev/qa/README.md)
 
 ## Contributing
 
-See `CONTRIBUTING.md`.
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 

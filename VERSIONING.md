@@ -10,4 +10,4 @@ LazyCompass follows pre-1.0 Semantic Versioning (SemVer) for the CLI and TUI.
 
 ## Schema notes
 
-Config and query schemas do not include an explicit schema version. Any config or schema changes are documented in `CHANGELOG.md` with migration guidance when needed.
+Config and query schemas do not include an explicit schema version. Any config or schema changes are documented in [CHANGELOG.md](./CHANGELOG.md) with migration guidance when needed.

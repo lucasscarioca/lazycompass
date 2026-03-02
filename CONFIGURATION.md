@@ -125,4 +125,4 @@ Saved queries and aggregations are loaded from repo-only files:
 - `.lazycompass/queries/*.json`
 - `.lazycompass/aggregations/*.json`
 
-See `QUERY_FORMAT.md` for schemas and examples.
+See [QUERY_FORMAT.md](./QUERY_FORMAT.md) for schemas and examples.

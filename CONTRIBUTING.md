@@ -12,6 +12,7 @@ Thanks for helping build LazyCompass. This file covers development setup and wor
 - `lazycompass` (binary) in `lazycompass-cli/`
 - `lazycompass-tui`: TUI library
 - `lazycompass-core`: shared domain models
+- `lazycompass-output`: shared result rendering
 - `lazycompass-storage`: config paths + persistence
 - `lazycompass-mongo`: MongoDB execution layer
 
@@ -63,6 +64,8 @@ cargo test -p lazycompass-core module_name::test_name
 
 ## Local Playground
 
+Manual QA guide: [dev/qa/README.md](./dev/qa/README.md)
+
 Start:
 
 ```bash
@@ -88,19 +91,20 @@ docker compose -f dev/mongodb/docker-compose.yml up -d
 
 ## Style and Guidelines
 
-- Follow `AGENTS.md` for code style and architecture rules
+- Follow [AGENTS.md](./AGENTS.md) for code style and architecture rules
 - Keep changes small and consistent with existing patterns
 - Add or update tests when behavior changes
 
 ## Docs
 
-- `CONFIGURATION.md`: config schema and defaults
-- `QUERY_FORMAT.md`: saved query/aggregation schemas
-- `VERSIONING.md`: SemVer policy
-- `RELEASE.md`: release checklist
-- `CHANGELOG.md`: release notes
+- [CONFIGURATION.md](./CONFIGURATION.md): config schema and defaults
+- [QUERY_FORMAT.md](./QUERY_FORMAT.md): saved query/aggregation schemas
+- [VERSIONING.md](./VERSIONING.md): SemVer policy
+- [RELEASE.md](./RELEASE.md): release checklist
+- [CHANGELOG.md](./CHANGELOG.md): release notes
+- [dev/qa/README.md](./dev/qa/README.md): manual playground validation
 
 ## Releases
 
-- Update `CHANGELOG.md` for every release.
-- Follow `RELEASE.md` for the release checklist.
+- Update [CHANGELOG.md](./CHANGELOG.md) for every release.
+- Follow [RELEASE.md](./RELEASE.md) for the release checklist.

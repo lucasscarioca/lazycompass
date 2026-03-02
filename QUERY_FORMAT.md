@@ -6,6 +6,7 @@ Saved queries and aggregations are read from the repo only:
 - `.lazycompass/aggregations/*.json`
 
 Only files with `.json` extension are loaded. Invalid files are skipped with warnings.
+Files with unknown fields or invalid payload shapes are treated as invalid and skipped with warnings.
 
 ## Filename IDs and scope
 

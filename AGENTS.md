@@ -14,13 +14,16 @@ Workspace crates:
 - `lazycompass` (binary) in `lazycompass-cli/`
 - `lazycompass-tui`: TUI library
 - `lazycompass-core`: shared domain models
+- `lazycompass-output`: shared result rendering
 - `lazycompass-storage`: config paths + persistence
 - `lazycompass-mongo`: MongoDB execution layer
 
 Key docs:
 
-- `SPEC.md`: source of truth for vision/requirements
-- `PLAYGROUND.md`: local MongoDB testing instructions
+- [`README.md`](./README.md): product overview and user-facing entrypoint
+- [`CONFIGURATION.md`](./CONFIGURATION.md): config schema and defaults
+- [`QUERY_FORMAT.md`](./QUERY_FORMAT.md): saved query and aggregation formats
+- [`dev/qa/README.md`](./dev/qa/README.md): local MongoDB playground and manual QA
 
 ## Build / Lint / Test Commands
 
@@ -160,7 +163,7 @@ Follow Rust 2024 edition idioms and keep changes minimal and consistent.
 ### Serialization and Config
 
 - Use `serde` for config and persisted data
-- Keep config TOML and saved spec JSON schemas stable; document changes in `SPEC.md`
+- Keep config TOML and saved spec JSON schemas stable; document changes in [`CONFIGURATION.md`](./CONFIGURATION.md), [`QUERY_FORMAT.md`](./QUERY_FORMAT.md), and [`CHANGELOG.md`](./CHANGELOG.md)
 - Query/aggregation `filter`/`pipeline` stored as JSON strings
 
 ### Async and Runtime
@@ -172,7 +175,7 @@ Follow Rust 2024 edition idioms and keep changes minimal and consistent.
 ### CLI
 
 - Use `clap` derive
-- Keep flags stable; document behavior in `SPEC.md` and `PLAYGROUND.md`
+- Keep flags stable; document behavior in [`README.md`](./README.md) and [`dev/qa/README.md`](./dev/qa/README.md)
 - Default output: pretty JSON; `--table` opt-in
 
 ### TUI
@@ -211,8 +214,8 @@ Follow Rust 2024 edition idioms and keep changes minimal and consistent.
 
 ## Release & repo maintenance
 
-- Update `CHANGELOG.md` for user-visible changes; keep entries scoped to the release.
-- Follow `RELEASE.md` for versioning/tagging and release steps before publishing.
-- Run the checklist in `SECURITY.md` for dependency/config changes that affect security posture.
-- Sync config defaults and examples per `CONFIGURATION.md` when changing config/saved spec schemas or paths.
-- Validate query/aggregation format updates against `QUERY_FORMAT.md`, and note any schema changes in `CHANGELOG.md`.
+- Update [`CHANGELOG.md`](./CHANGELOG.md) for user-visible changes; keep entries scoped to the release.
+- Follow [`RELEASE.md`](./RELEASE.md) for versioning/tagging and release steps before publishing.
+- Review security-sensitive dependency, config, installer, and write-safety changes explicitly before publishing.
+- Sync config defaults and examples per [`CONFIGURATION.md`](./CONFIGURATION.md) when changing config/saved spec schemas or paths.
+- Validate query/aggregation format updates against [`QUERY_FORMAT.md`](./QUERY_FORMAT.md), and note any schema changes in [`CHANGELOG.md`](./CHANGELOG.md).
