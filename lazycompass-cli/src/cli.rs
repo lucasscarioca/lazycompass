@@ -50,7 +50,7 @@ pub(crate) enum Commands {
     Update(UpdateArgs),
     #[command(about = "Open or update LazyCompass config")]
     Config(ConfigArgs),
-    #[command(about = "Install or upgrade LazyCompass via install.sh")]
+    #[command(about = "Upgrade LazyCompass from release assets or source")]
     Upgrade(UpgradeArgs),
 }
 
@@ -257,17 +257,23 @@ pub(crate) enum ConfigCommands {
 
 #[derive(Args)]
 #[command(
-    about = "Install or upgrade LazyCompass via install.sh",
-    long_about = "Run the local install.sh when present, otherwise download the installer and run it. Use flags to pin a version, switch repositories, build from source, or skip shell profile PATH changes."
+    about = "Upgrade LazyCompass from release assets or source",
+    long_about = "Download the matching GitHub release archive, verify its checksum, and replace the current binary in place. Use --version to pin a release, --repo to switch repositories, or --from-source to run cargo install from a Git checkout instead."
 )]
 pub(crate) struct UpgradeArgs {
     #[arg(long, help = "Install a specific release version")]
     pub(crate) version: Option<String>,
     #[arg(long, help = "Use a different GitHub repo in owner/name form")]
     pub(crate) repo: Option<String>,
-    #[arg(long, help = "Build and install from source instead of release assets")]
+    #[arg(
+        long,
+        help = "Use cargo install from a Git checkout instead of release assets"
+    )]
     pub(crate) from_source: bool,
-    #[arg(long, help = "Do not modify shell profile PATH settings")]
+    #[arg(
+        long,
+        help = "Accepted for compatibility; upgrade no longer edits PATH profiles"
+    )]
     pub(crate) no_modify_path: bool,
 }
 

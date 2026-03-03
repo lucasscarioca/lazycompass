@@ -31,13 +31,13 @@ Build from source or install via Cargo (requires Rust toolchain):
 cargo install --path . -p lazycompass --locked
 ```
 
-Upgrade (re-runs the installer):
+Upgrade:
 
 ```bash
 lazycompass upgrade
 ```
 
-Upgrade downloads `install.sh` from `raw.githubusercontent.com` for the official repo by default, or for the repo passed with `--repo`. It does not execute a local `install.sh` from the current directory.
+Upgrade downloads the matching release archive and checksum from GitHub Releases, verifies the checksum, extracts the binary, and replaces the current executable in place. `--from-source` uses `cargo install` from a Git checkout instead of release artifacts.
 
 Verification:
 
