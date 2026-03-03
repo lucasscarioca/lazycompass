@@ -44,6 +44,7 @@ Verification:
 - The installer verifies release asset checksums when a `.sha256` file is present.
 - If a `.sha256.sig` signature is present and `gpg` is installed, the installer verifies it too.
 - See [SECURITY.md](./SECURITY.md) for vulnerability reporting and current release verification guidance.
+- Signed releases use the public key in [keys/lazycompass-release-signing.asc](./keys/lazycompass-release-signing.asc).
 
 Manual verification example (Linux x64):
 

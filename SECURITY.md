@@ -14,9 +14,10 @@
 ## Release verification
 
 - Release archives must ship with a `.sha256` checksum file.
-- `.sha256.sig` signatures are optional and only meaningful if a maintainer has published a matching public key and fingerprint.
-- Until a stable public signing key is published in this repo, treat checksum verification as the required release integrity check.
-- If signing is enabled for a release, the public key location and fingerprint must be added here before that release is announced.
+- Signed releases use the public key in [keys/lazycompass-release-signing.asc](./keys/lazycompass-release-signing.asc).
+- Current release signing fingerprint: `5D7E F1CB 7FD9 672A 6D11 3B5C 7450 2B60 9A66 0BAA`
+- `0.9.0` predates signing setup and does not ship `.sha256.sig` assets.
+- If a release ships both `.sha256` and `.sha256.sig`, verify the signature first, then verify the checksum against the archive.
 
 ## Security review expectations
 

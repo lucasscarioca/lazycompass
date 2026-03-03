@@ -3,7 +3,7 @@ use std::env;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cli::UpgradeArgs;
@@ -298,10 +298,12 @@ fn download_file(url: &str, destination: &Path) -> Result<()> {
 
 fn download_optional_file(url: &str, destination: &Path) -> Result<bool> {
     let status = Command::new("curl")
-        .arg("-fsSL")
+        .arg("-fsL")
         .arg("-o")
         .arg(destination)
         .arg(url)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .context("failed to execute curl")?;
     Ok(status.success())
