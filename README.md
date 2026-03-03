@@ -12,7 +12,7 @@ LazyCompass is pre-1.0. Breaking changes may happen in minor releases until 1.0;
 
 Prebuilt binaries from GitHub releases:
 
-- Supported release targets today: Linux x64, macOS x64, macOS arm64.
+- Supported release targets today: Linux x64 (glibc), macOS x64, macOS arm64.
 - Other platforms can still use `cargo install --path . -p lazycompass --locked`.
 
 ```bash
@@ -43,6 +43,7 @@ Verification:
 
 - The installer verifies release asset checksums when a `.sha256` file is present.
 - If a `.sha256.sig` signature is present and `gpg` is installed, the installer verifies it too.
+- See [SECURITY.md](./SECURITY.md) for vulnerability reporting and current release verification guidance.
 
 Manual verification example (Linux x64):
 
@@ -168,6 +169,9 @@ See [CONFIGURATION.md](./CONFIGURATION.md) and [QUERY_FORMAT.md](./QUERY_FORMAT.
 - [QUERY_FORMAT.md](./QUERY_FORMAT.md)
 - [VERSIONING.md](./VERSIONING.md)
 - [RELEASE.md](./RELEASE.md)
+- [SECURITY.md](./SECURITY.md)
+- [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
+- [SUPPORT.md](./SUPPORT.md)
 - [CHANGELOG.md](./CHANGELOG.md)
 - [dev/qa/README.md](./dev/qa/README.md)
 

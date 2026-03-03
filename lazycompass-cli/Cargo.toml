@@ -6,6 +6,7 @@ license = "MIT"
 description = "Fast, vim-first MongoDB client for the terminal"
 repository = "https://github.com/lucasscarioca/lazycompass"
 homepage = "https://github.com/lucasscarioca/lazycompass"
+documentation = "https://github.com/lucasscarioca/lazycompass#readme"
 readme = "../README.md"
 keywords = ["mongodb", "tui", "cli", "terminal"]
 categories = ["command-line-utilities", "database"]

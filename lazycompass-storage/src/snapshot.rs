@@ -3,7 +3,7 @@ use lazycompass_core::{Config, SavedAggregation, SavedQuery, connection_security
 
 use crate::{
     ConfigPaths, load_config, load_saved_aggregations, load_saved_queries,
-    security::permission_warnings,
+    security::{normalize_permissions, permission_warnings},
 };
 
 #[derive(Debug, Clone)]
@@ -20,6 +20,7 @@ pub fn load_storage(paths: &ConfigPaths) -> Result<StorageSnapshot> {
 }
 
 pub fn load_storage_with_config(paths: &ConfigPaths, config: Config) -> Result<StorageSnapshot> {
+    normalize_permissions(paths);
     let mut warnings = connection_security_warnings(&config);
     warnings.extend(permission_warnings(paths));
     let (queries, query_warnings) = load_saved_queries(paths)?;
@@ -136,7 +137,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn load_storage_with_config_does_not_normalize_permissions() {
+    fn load_storage_with_config_normalizes_permissions() {
         let root = temp_dir("permissions");
         let global_root = root.join("global");
         fs::create_dir_all(&global_root).expect("create global root");
@@ -156,9 +157,9 @@ mod tests {
             .permissions()
             .mode()
             & 0o777;
-        assert_eq!(mode, 0o644);
+        assert_eq!(mode, 0o600);
         assert!(
-            storage
+            !storage
                 .warnings
                 .iter()
                 .any(|warning| warning.contains("permission warning"))

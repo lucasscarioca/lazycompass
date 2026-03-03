@@ -2,6 +2,10 @@
 
 Thanks for helping build LazyCompass. This file covers development setup and workflow.
 
+- Security reports: see [SECURITY.md](./SECURITY.md)
+- Community expectations: see [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
+- User support and triage: see [SUPPORT.md](./SUPPORT.md)
+
 ## Prerequisites
 
 - Rust (LTS toolchain, edition 2024)
@@ -88,6 +92,7 @@ docker compose -f dev/mongodb/docker-compose.yml up -d
 
 - Maintainer workflow: direct commits/pushes to `main`
 - External contributions: issues and PRs are welcome, but expect the maintainer to keep working directly on `main`
+- For external PRs: keep scope tight, include tests for behavior changes, and update docs when user-facing behavior changes
 - Rule: always run full local checks before pushing
 
 ## Style and Guidelines

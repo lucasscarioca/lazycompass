@@ -6,6 +6,8 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+- Release: gate tagged releases behind full verify/build/audit jobs, publish GitHub releases as drafts until all artifacts upload, and document release trust/community files for v1 readiness.
+- Security: auto-normalize config and saved-spec permissions during storage load instead of only warning.
 - Security: create TUI editor temp files with `create_new` semantics so symlinks and collisions cannot clobber unrelated files before the editor opens.
 - UX: scope `--dangerously-enable-write` to MongoDB write operations only; local config edits, saved query/aggregation writes, exports, and logging stay available without it.
 - Config: reject symlinked paths in `config edit`, preserve comments/unknown keys when appending connections, and let TUI repo/global adds override same-name connections from the other scope in memory.
