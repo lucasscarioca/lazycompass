@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use lazycompass_core::{OutputFormat, QueryRequest, QueryTarget, WriteGuard};
+use lazycompass_core::{OutputFormat, QueryRequest, QueryTarget};
 use lazycompass_mongo::{MongoExecutor, QuerySpec};
 use lazycompass_storage::{ConfigPaths, StorageSnapshot, load_storage};
 
@@ -11,8 +11,8 @@ use crate::output::print_documents;
 
 pub(crate) fn run_query(
     args: QueryArgs,
-    dangerously_enable_write: bool,
-    allow_pipeline_writes: bool,
+    _dangerously_enable_write: bool,
+    _allow_pipeline_writes: bool,
     allow_insecure: bool,
 ) -> Result<()> {
     let cwd = std::env::current_dir().context("unable to resolve current directory")?;
@@ -20,8 +20,7 @@ pub(crate) fn run_query(
     let storage = load_storage(&paths)?;
     let mut config = storage.config.clone();
     apply_cli_overrides(&mut config, allow_insecure);
-    let write_guard = WriteGuard::new(dangerously_enable_write, allow_pipeline_writes);
-    init_logging(&paths, &config, write_guard)?;
+    init_logging(&paths, &config)?;
     tracing::info!(component = "cli", command = "query", "lazycompass started");
     report_warnings(&storage);
     let mut args = args;

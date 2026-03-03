@@ -3,6 +3,13 @@ name = "lazycompass"
 version = "0.9.0"
 edition = "2024"
 license = "MIT"
+description = "Fast, vim-first MongoDB client for the terminal"
+repository = "https://github.com/lucasscarioca/lazycompass"
+homepage = "https://github.com/lucasscarioca/lazycompass"
+readme = "../README.md"
+keywords = ["mongodb", "tui", "cli", "terminal"]
+categories = ["command-line-utilities", "database"]
+rust-version = "1.85"
 
 [dependencies]
 anyhow = { workspace = true }

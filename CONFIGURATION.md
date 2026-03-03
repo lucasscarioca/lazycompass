@@ -35,12 +35,13 @@ Defaults:
 
 Write controls:
 
-- Writes are disabled by default on every run.
-- Use `--dangerously-enable-write` or `--yolo` to enable write actions for the current CLI/TUI session.
+- MongoDB write operations are disabled by default on every run.
+- Use `--dangerously-enable-write` or `--yolo` to enable MongoDB write actions for the current CLI/TUI session.
 - Use `--allow-pipeline-writes` with `--dangerously-enable-write` to allow `$out`/`$merge` for the current run.
 - `allow_insecure` permits insecure connections for the current config/run.
 - Config files cannot enable writes. `read_only` and `allow_pipeline_writes` are rejected if present.
 - Runtime override: `--allow-insecure` permits insecure connections for the run.
+- Local actions like config edits, saved query/aggregation writes, exports, and clipboard copy are not gated by `--dangerously-enable-write`.
 
 File permissions (Unix):
 

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use lazycompass_storage::{
     ConfigPaths, append_connection_to_global_config, append_connection_to_repo_config,
-    ensure_secure_dir, write_secure_file,
+    ensure_not_symlinked_file, ensure_secure_dir, write_secure_file,
 };
 use std::fs;
 
@@ -48,6 +48,7 @@ fn run_config_edit(paths: &ConfigPaths, scope: ConfigScope) -> Result<()> {
     if let Some(parent) = config_path.parent() {
         ensure_secure_dir(parent)?;
     }
+    ensure_not_symlinked_file(&config_path)?;
 
     if !config_path.exists() {
         let default_config = r#"# LazyCompass Configuration
@@ -154,9 +155,13 @@ default_database = "mydb"
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
+
     use lazycompass_storage::ConfigPaths;
 
-    use super::{ConfigScope, resolve_config_scope};
+    use super::{ConfigScope, resolve_config_scope, run_config_edit};
 
     #[test]
     fn resolve_config_scope_defaults_to_repo_when_available() {
@@ -180,5 +185,33 @@ mod tests {
             resolve_config_scope(&paths, false, false),
             ConfigScope::Global
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_config_edit_rejects_symlinked_config_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "lazycompass_config_edit_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("create root");
+        let target = root.join("target.toml");
+        let link_root = root.join("global");
+        fs::create_dir_all(&link_root).expect("create global root");
+        fs::write(&target, "").expect("write target");
+        symlink(&target, link_root.join("config.toml")).expect("create symlink");
+
+        let paths = ConfigPaths {
+            global_root: link_root,
+            repo_root: None,
+        };
+        let err = run_config_edit(&paths, ConfigScope::Global).expect_err("expected symlink error");
+        assert!(err.to_string().contains("symlinked file"));
+
+        let _ = fs::remove_dir_all(root);
     }
 }

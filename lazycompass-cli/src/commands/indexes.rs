@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use lazycompass_core::{OutputFormat, WriteGuard};
+use lazycompass_core::OutputFormat;
 use lazycompass_mongo::MongoExecutor;
 use lazycompass_storage::{ConfigPaths, load_storage};
 
@@ -11,8 +11,8 @@ use crate::output::print_documents;
 
 pub(crate) fn run_indexes(
     args: IndexesArgs,
-    dangerously_enable_write: bool,
-    allow_pipeline_writes: bool,
+    _dangerously_enable_write: bool,
+    _allow_pipeline_writes: bool,
     allow_insecure: bool,
 ) -> Result<()> {
     let cwd = std::env::current_dir().context("unable to resolve current directory")?;
@@ -20,8 +20,7 @@ pub(crate) fn run_indexes(
     let storage = load_storage(&paths)?;
     let mut config = storage.config.clone();
     apply_cli_overrides(&mut config, allow_insecure);
-    let write_guard = WriteGuard::new(dangerously_enable_write, allow_pipeline_writes);
-    init_logging(&paths, &config, write_guard)?;
+    init_logging(&paths, &config)?;
     tracing::info!(
         component = "cli",
         command = "indexes",

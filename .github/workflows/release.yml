@@ -22,14 +22,75 @@ jobs:
     name: create release
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Validate release metadata
+        run: |
+          version="${RELEASE_TAG#v}"
+          if [ -z "$version" ] || [ "$version" = "$RELEASE_TAG" ]; then
+            echo "invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          manifests=(
+            lazycompass-cli/Cargo.toml
+            lazycompass-core/Cargo.toml
+            lazycompass-mongo/Cargo.toml
+            lazycompass-output/Cargo.toml
+            lazycompass-storage/Cargo.toml
+            lazycompass-tui/Cargo.toml
+          )
+
+          observed=""
+          for manifest in "${manifests[@]}"; do
+            current=$(sed -n 's/^version = "\(.*\)"/\1/p' "$manifest" | head -n1)
+            if [ -z "$current" ]; then
+              echo "unable to read version from $manifest" >&2
+              exit 1
+            fi
+            if [ -z "$observed" ]; then
+              observed="$current"
+            elif [ "$observed" != "$current" ]; then
+              echo "crate versions do not match: $observed vs $current ($manifest)" >&2
+              exit 1
+            fi
+          done
+
+          if [ "$observed" != "$version" ]; then
+            echo "tag version $version does not match crate version $observed" >&2
+            exit 1
+          fi
+
+          if ! grep -q "^## \[$version\] - " CHANGELOG.md; then
+            echo "CHANGELOG.md is missing a section for $version" >&2
+            exit 1
+          fi
+
+      - name: Extract release notes
+        run: |
+          version="${RELEASE_TAG#v}"
+          awk -v version="$version" '
+            $0 ~ "^## \\[" version "\\] - " { capture = 1; next }
+            capture && /^## \[/ { exit }
+            capture { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "release notes for $version are empty" >&2
+            exit 1
+          fi
+
       - name: Ensure release exists
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --notes-file release-notes.md
             exit 0
           fi
-          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --notes ""
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --notes-file release-notes.md
 
   build:
     name: build (${{ matrix.target }})

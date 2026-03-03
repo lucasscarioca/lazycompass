@@ -608,12 +608,12 @@ impl App {
     }
 
     pub(crate) fn perform_confirm_action(&mut self, action: ConfirmAction) -> Result<()> {
-        let guard = self.write_guard();
         match action {
             ConfirmAction::DeleteDocument {
                 spec,
                 return_to_documents,
             } => {
+                let guard = self.write_guard();
                 if let Err(error) = guard.ensure_write_allowed("delete documents") {
                     self.message = Some(error.to_string());
                     return Ok(());
@@ -630,19 +630,11 @@ impl App {
                 self.message = Some("document deleted".to_string());
             }
             ConfirmAction::OverwriteQuery { query } => {
-                if let Err(error) = guard.ensure_write_allowed("save queries") {
-                    self.message = Some(error.to_string());
-                    return Ok(());
-                }
                 let path = write_saved_query(&self.paths, &query, true)?;
                 self.upsert_query(query);
                 self.message = Some(format!("saved query to {}", path.display()));
             }
             ConfirmAction::OverwriteAggregation { aggregation } => {
-                if let Err(error) = guard.ensure_write_allowed("save aggregations") {
-                    self.message = Some(error.to_string());
-                    return Ok(());
-                }
                 let path = write_saved_aggregation(&self.paths, &aggregation, true)?;
                 self.upsert_aggregation(aggregation);
                 self.message = Some(format!("saved aggregation to {}", path.display()));

@@ -12,7 +12,7 @@ use crate::{ConfigPaths, paths::APP_DIR, saved_common::collect_json_paths};
 const DIR_MODE: u32 = 0o700;
 const FILE_MODE: u32 = 0o600;
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 pub(crate) fn normalize_permissions(paths: &ConfigPaths) {
     let _ = normalize_dir_if_exists(&paths.global_root);
     let _ = normalize_file_if_exists(&paths.global_config_path());
@@ -33,7 +33,7 @@ pub(crate) fn normalize_permissions(paths: &ConfigPaths) {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(all(test, not(unix)))]
 pub(crate) fn normalize_permissions(_paths: &ConfigPaths) {}
 
 pub fn ensure_secure_dir(path: &Path) -> Result<()> {
@@ -117,6 +117,19 @@ pub fn write_secure_file(path: &Path, contents: &str, overwrite: bool) -> Result
         drop(file);
         rename_atomic(&temp_path, path, overwrite)?;
         Ok(())
+    }
+}
+
+pub fn ensure_not_symlinked_file(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            anyhow::bail!("refusing to use symlinked file {}", path.display());
+        }
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            Err(error).with_context(|| format!("unable to inspect file {}", path.display()))
+        }
     }
 }
 
@@ -216,7 +229,7 @@ fn set_file_permissions(_path: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 fn normalize_dir_if_exists(path: &Path) -> Result<()> {
     if let Ok(metadata) = fs::symlink_metadata(path)
         && metadata.is_dir()
@@ -227,7 +240,7 @@ fn normalize_dir_if_exists(path: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 fn normalize_file_if_exists(path: &Path) -> Result<()> {
     if let Ok(metadata) = fs::symlink_metadata(path)
         && metadata.is_file()
@@ -238,7 +251,7 @@ fn normalize_file_if_exists(path: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 fn normalize_json_files_in_dir(path: &Path) -> Result<()> {
     let paths = collect_json_paths(path)?;
     for json_path in paths {

@@ -22,7 +22,7 @@ pub(crate) fn run_insert(
     let mut config = storage.config.clone();
     apply_cli_overrides(&mut config, allow_insecure);
     let write_guard = WriteGuard::new(dangerously_enable_write, allow_pipeline_writes);
-    init_logging(&paths, &config, write_guard)?;
+    init_logging(&paths, &config)?;
     tracing::info!(component = "cli", command = "insert", "lazycompass started");
     report_warnings(&storage);
 

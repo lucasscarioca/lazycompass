@@ -86,7 +86,8 @@ docker compose -f dev/mongodb/docker-compose.yml up -d
 
 ## Git Workflow
 
-- Current mode: direct commits/pushes to `main` (no PR required)
+- Maintainer workflow: direct commits/pushes to `main`
+- External contributions: issues and PRs are welcome, but expect the maintainer to keep working directly on `main`
 - Rule: always run full local checks before pushing
 
 ## Style and Guidelines

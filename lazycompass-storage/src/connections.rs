@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     ConfigPaths,
-    security::{ensure_secure_dir, write_secure_file},
+    security::{ensure_not_symlinked_file, ensure_secure_dir, write_secure_file},
 };
 
 /// Append a connection to the repo config file.
@@ -24,24 +24,11 @@ pub async fn append_connection_to_repo_config(
     ensure_secure_dir(&queries_dir)?;
     ensure_secure_dir(&aggregations_dir)?;
 
-    let mut config = if config_path.exists() {
-        read_config_for_update(&config_path)?
-    } else {
-        lazycompass_core::Config::default()
-    };
-
-    if config.connections.iter().any(|c| c.name == connection.name) {
-        anyhow::bail!(
-            "connection '{}' already exists in repo config",
-            connection.name
-        );
-    }
-
-    config.connections.push(connection.clone());
-
-    let contents = toml::to_string_pretty(&config).context("unable to serialize config")?;
-    write_secure_file(&config_path, &contents, true)
-        .with_context(|| format!("unable to write config {}", config_path.display()))?;
+    append_connection_to_config_file(
+        &config_path,
+        connection,
+        "connection '{}' already exists in repo config",
+    )?;
 
     Ok(config_path)
 }
@@ -56,38 +43,78 @@ pub async fn append_connection_to_global_config(
 
     ensure_secure_dir(&paths.global_root)?;
 
-    let mut config = if config_path.exists() {
-        read_config_for_update(&config_path)?
-    } else {
-        lazycompass_core::Config::default()
-    };
-
-    if config.connections.iter().any(|c| c.name == connection.name) {
-        anyhow::bail!(
-            "connection '{}' already exists in global config",
-            connection.name
-        );
-    }
-
-    config.connections.push(connection.clone());
-
-    let contents = toml::to_string_pretty(&config).context("unable to serialize config")?;
-    write_secure_file(&config_path, &contents, true)
-        .with_context(|| format!("unable to write config {}", config_path.display()))?;
+    append_connection_to_config_file(
+        &config_path,
+        connection,
+        "connection '{}' already exists in global config",
+    )?;
 
     Ok(config_path)
 }
 
-fn read_config_for_update(path: &Path) -> Result<lazycompass_core::Config> {
+fn append_connection_to_config_file(
+    config_path: &Path,
+    connection: &lazycompass_core::ConnectionSpec,
+    duplicate_message: &str,
+) -> Result<()> {
+    let existing = read_config_for_update(config_path)?;
+    if existing
+        .parsed
+        .connections
+        .iter()
+        .any(|candidate| candidate.name == connection.name)
+    {
+        let message = duplicate_message.replace("{}", &connection.name);
+        anyhow::bail!(message);
+    }
+
+    let mut contents = existing.raw;
+    if !contents.trim().is_empty() {
+        if !contents.ends_with('\n') {
+            contents.push('\n');
+        }
+        contents.push('\n');
+    }
+    contents.push_str(&render_connection_block(connection)?);
+    if !contents.ends_with('\n') {
+        contents.push('\n');
+    }
+
+    write_secure_file(config_path, &contents, existing.exists)
+        .with_context(|| format!("unable to write config {}", config_path.display()))
+}
+
+struct ConfigUpdate {
+    exists: bool,
+    parsed: lazycompass_core::Config,
+    raw: String,
+}
+
+fn read_config_for_update(path: &Path) -> Result<ConfigUpdate> {
+    ensure_not_symlinked_file(path)?;
     if !path.is_file() {
-        return Ok(lazycompass_core::Config::default());
+        return Ok(ConfigUpdate {
+            exists: false,
+            parsed: lazycompass_core::Config::default(),
+            raw: String::new(),
+        });
     }
 
     let contents = fs::read_to_string(path)
         .with_context(|| format!("unable to read config file {}", path.display()))?;
     let config: lazycompass_core::Config = toml::from_str(&contents)
         .with_context(|| format!("invalid TOML in config file {}", path.display()))?;
-    Ok(config)
+    Ok(ConfigUpdate {
+        exists: true,
+        parsed: config,
+        raw: contents,
+    })
+}
+
+fn render_connection_block(connection: &lazycompass_core::ConnectionSpec) -> Result<String> {
+    let mut block = String::from("[[connections]]\n");
+    block.push_str(&toml::to_string_pretty(connection).context("unable to serialize connection")?);
+    Ok(block)
 }
 
 #[cfg(test)]
@@ -159,8 +186,8 @@ mod tests {
         ))
         .expect("append global");
         let config = read_config_for_update(&path).expect("read config");
-        assert_eq!(config.connections.len(), 1);
-        assert_eq!(config.connections[0].name, "local");
+        assert_eq!(config.parsed.connections.len(), 1);
+        assert_eq!(config.parsed.connections[0].name, "local");
 
         let _ = fs::remove_dir_all(root);
     }
@@ -224,6 +251,36 @@ mod tests {
 
         assert!(repo_root.join(".lazycompass/queries").is_dir());
         assert!(repo_root.join(".lazycompass/aggregations").is_dir());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn append_connection_preserves_existing_comments_and_unknown_keys() {
+        let root = temp_dir("preserve");
+        let paths = ConfigPaths {
+            global_root: root.join("global"),
+            repo_root: None,
+        };
+        fs::create_dir_all(&paths.global_root).expect("create global root");
+        let config_path = paths.global_root.join("config.toml");
+        fs::write(
+            &config_path,
+            "# keep me\ncustom = \"value\"\n\n[theme]\nname = \"ember\"\n",
+        )
+        .expect("write config");
+
+        block_on_ready(append_connection_to_global_config(
+            &paths,
+            &sample_connection("local"),
+        ))
+        .expect("append global");
+
+        let contents = fs::read_to_string(&config_path).expect("read config");
+        assert!(contents.contains("# keep me"));
+        assert!(contents.contains("custom = \"value\""));
+        assert!(contents.contains("[theme]"));
+        assert!(contents.contains("[[connections]]"));
 
         let _ = fs::remove_dir_all(root);
     }

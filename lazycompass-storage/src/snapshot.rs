@@ -3,7 +3,7 @@ use lazycompass_core::{Config, SavedAggregation, SavedQuery, connection_security
 
 use crate::{
     ConfigPaths, load_config, load_saved_aggregations, load_saved_queries,
-    security::{normalize_permissions, permission_warnings},
+    security::permission_warnings,
 };
 
 #[derive(Debug, Clone)]
@@ -20,7 +20,6 @@ pub fn load_storage(paths: &ConfigPaths) -> Result<StorageSnapshot> {
 }
 
 pub fn load_storage_with_config(paths: &ConfigPaths, config: Config) -> Result<StorageSnapshot> {
-    normalize_permissions(paths);
     let mut warnings = connection_security_warnings(&config);
     warnings.extend(permission_warnings(paths));
     let (queries, query_warnings) = load_saved_queries(paths)?;
@@ -41,6 +40,8 @@ mod tests {
     use crate::ConfigPaths;
     use lazycompass_core::{Config, ConnectionSpec};
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
 
     fn temp_dir(prefix: &str) -> PathBuf {
@@ -128,6 +129,39 @@ mod tests {
                 .warnings
                 .iter()
                 .any(|warning| warning.contains("skipping saved query"))
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_storage_with_config_does_not_normalize_permissions() {
+        let root = temp_dir("permissions");
+        let global_root = root.join("global");
+        fs::create_dir_all(&global_root).expect("create global root");
+        let config_path = global_root.join("config.toml");
+        fs::write(&config_path, "").expect("write config");
+        fs::set_permissions(&config_path, fs::Permissions::from_mode(0o644))
+            .expect("set test permissions");
+
+        let paths = ConfigPaths {
+            global_root,
+            repo_root: None,
+        };
+        let storage = load_storage_with_config(&paths, Config::default()).expect("load storage");
+
+        let mode = fs::metadata(&config_path)
+            .expect("stat config")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o644);
+        assert!(
+            storage
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("permission warning"))
         );
 
         let _ = fs::remove_dir_all(root);

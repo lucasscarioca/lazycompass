@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use lazycompass_core::WriteGuard;
 use lazycompass_storage::{ConfigPaths, load_config};
 
 use crate::cli::{Cli, Commands};
@@ -173,8 +172,7 @@ fn execute(action: AppAction) -> Result<()> {
             let paths = ConfigPaths::resolve_from(&cwd)?;
             let mut config = load_config(&paths)?;
             apply_cli_overrides(&mut config, allow_insecure);
-            let write_guard = WriteGuard::new(dangerously_enable_write, allow_pipeline_writes);
-            init_logging(&paths, &config, write_guard)?;
+            init_logging(&paths, &config)?;
             tracing::info!(component = "tui", command = "tui", "lazycompass started");
             lazycompass_tui::run(config, dangerously_enable_write, allow_pipeline_writes)?;
         }

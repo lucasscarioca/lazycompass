@@ -23,5 +23,6 @@ git tag -a v<version> -m "v<version>"
 ```
 
 Use the same version in crate manifests, the tag, and the release notes.
+The release workflow validates this and publishes the matching `CHANGELOG.md` section as the GitHub release notes.
 
 Security hardening: for releases that change dependencies, config, or security-sensitive behavior, do an explicit security review before publishing.

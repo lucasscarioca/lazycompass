@@ -5,7 +5,7 @@ impl App {
         WriteGuard::new(self.write_enabled, self.allow_pipeline_writes)
     }
 
-    pub(crate) fn block_if_write_disabled(&mut self, action: &str) -> bool {
+    pub(crate) fn block_if_db_write_disabled(&mut self, action: &str) -> bool {
         let guard = self.write_guard();
         if let Err(error) = guard.ensure_write_allowed(action) {
             self.message = Some(error.to_string());
@@ -29,7 +29,7 @@ impl App {
         if !matches!(self.screen, Screen::Documents | Screen::DocumentView) {
             return Ok(());
         }
-        if self.block_if_write_disabled("delete documents") {
+        if self.block_if_db_write_disabled("delete documents") {
             return Ok(());
         }
         let result = (|| -> Result<()> {
@@ -71,7 +71,7 @@ impl App {
         if self.screen != Screen::Documents {
             return Ok(());
         }
-        if self.block_if_write_disabled("insert documents") {
+        if self.block_if_db_write_disabled("insert documents") {
             return Ok(());
         }
         let result = (|| -> Result<()> {
@@ -111,7 +111,7 @@ impl App {
                 None => {}
             }
         }
-        if self.block_if_write_disabled("edit documents") {
+        if self.block_if_db_write_disabled("edit documents") {
             return Ok(());
         }
         let result = (|| -> Result<()> {
@@ -141,9 +141,6 @@ impl App {
     ) -> Result<()> {
         let _ = terminal;
         if self.screen != Screen::Documents {
-            return Ok(());
-        }
-        if self.block_if_write_disabled("save queries") {
             return Ok(());
         }
         self.query_save_source = self
@@ -203,9 +200,6 @@ impl App {
     ) -> Result<()> {
         let _ = terminal;
         if self.screen != Screen::Documents {
-            return Ok(());
-        }
-        if self.block_if_write_disabled("save aggregations") {
             return Ok(());
         }
         self.aggregation_save_source = self
@@ -519,13 +513,13 @@ impl App {
             anyhow::bail!("connection uri cannot be empty");
         }
 
-        // Check for duplicate names
-        if self
-            .storage
-            .config
-            .connections
-            .iter()
-            .any(|c| c.name == connection.name)
+        if matches!(scope, ConnectionPersistenceScope::SessionOnly)
+            && self
+                .storage
+                .config
+                .connections
+                .iter()
+                .any(|c| c.name == connection.name)
         {
             anyhow::bail!("connection with name '{}' already exists", connection.name);
         }
@@ -533,7 +527,6 @@ impl App {
         match scope {
             ConnectionPersistenceScope::SessionOnly => {
                 self.storage.config.connections.push(connection.clone());
-                // Update connection_index to point to the new connection
                 self.connection_index = Some(self.storage.config.connections.len() - 1);
                 self.message = Some(format!(
                     "added connection '{}' (session only)",
@@ -558,9 +551,7 @@ impl App {
                     return Ok(());
                 }
 
-                // Update in-memory config
-                self.storage.config.connections.push(connection.clone());
-                self.connection_index = Some(self.storage.config.connections.len() - 1);
+                self.upsert_connection(connection.clone());
                 self.message = Some(format!(
                     "added connection '{}' to repo config",
                     connection.name
@@ -581,9 +572,7 @@ impl App {
                     return Ok(());
                 }
 
-                // Update in-memory config
-                self.storage.config.connections.push(connection.clone());
-                self.connection_index = Some(self.storage.config.connections.len() - 1);
+                self.upsert_connection(connection.clone());
                 self.message = Some(format!(
                     "added connection '{}' to global config",
                     connection.name
@@ -1008,9 +997,13 @@ impl App {
         label: &str,
         initial: &str,
     ) -> Result<String> {
-        let path = editor_temp_path(label);
-        write_editor_temp_file(&path, initial)
-            .with_context(|| format!("unable to write temporary file {}", path.display()))?;
+        let extension = if label == "connection" {
+            "toml"
+        } else {
+            "json"
+        };
+        let path = create_secure_editor_temp_file(label, extension, initial)
+            .with_context(|| format!("unable to create temporary file for {label}"))?;
 
         suspend_terminal(terminal)?;
         let status = run_editor_command(editor, &path);
@@ -1080,6 +1073,22 @@ impl App {
             *existing = query;
         } else {
             self.storage.queries.push(query);
+        }
+    }
+
+    pub(crate) fn upsert_connection(&mut self, connection: ConnectionSpec) {
+        if let Some(index) = self
+            .storage
+            .config
+            .connections
+            .iter()
+            .position(|existing| existing.name == connection.name)
+        {
+            self.storage.config.connections[index] = connection;
+            self.connection_index = Some(index);
+        } else {
+            self.storage.config.connections.push(connection);
+            self.connection_index = Some(self.storage.config.connections.len() - 1);
         }
     }
 
@@ -1194,6 +1203,7 @@ mod tests {
     #[test]
     fn save_query_enters_scope_selection() {
         let mut app = app_with_document_context();
+        app.write_enabled = false;
         app.save_query_scope_index = None;
         let mut terminal = test_terminal();
 
@@ -1230,6 +1240,7 @@ mod tests {
     #[test]
     fn save_aggregation_enters_scope_selection() {
         let mut app = app_with_document_context();
+        app.write_enabled = false;
         app.save_agg_scope_index = None;
         let mut terminal = test_terminal();
 
@@ -1345,6 +1356,20 @@ mod tests {
         app.start_add_connection().expect("start add connection");
         assert_eq!(app.screen, Screen::AddConnectionScopeSelect);
         assert_eq!(app.add_connection_scope_index, Some(0));
+    }
+
+    #[test]
+    fn upsert_connection_replaces_existing_connection_by_name() {
+        let mut app = App::test_app_with_storage(storage_with_context());
+        app.upsert_connection(ConnectionSpec {
+            name: "local".to_string(),
+            uri: "mongodb://override".to_string(),
+            default_database: Some("override".to_string()),
+        });
+
+        assert_eq!(app.storage.config.connections.len(), 1);
+        assert_eq!(app.storage.config.connections[0].uri, "mongodb://override");
+        assert_eq!(app.connection_index, Some(0));
     }
 
     #[test]

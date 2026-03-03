@@ -1,4 +1,5 @@
 use super::*;
+
 pub(crate) fn resolve_editor() -> Result<String> {
     std::env::var("VISUAL")
         .ok()
@@ -84,18 +85,47 @@ pub(crate) fn run_editor_command(editor: &str, path: &Path) -> Result<std::proce
         .context("failed to launch editor")
 }
 
-pub(crate) fn write_editor_temp_file(path: &Path, contents: &str) -> Result<()> {
+pub(crate) fn create_secure_editor_temp_file(
+    label: &str,
+    extension: &str,
+    contents: &str,
+) -> Result<PathBuf> {
+    let pid = std::process::id();
+    for attempt in 0..32u32 {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "lazycompass_{label}_{pid}_{nonce}_{attempt}.{extension}"
+        ));
+        match write_new_temp_file(&path, contents) {
+            Ok(()) => return Ok(path),
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    anyhow::bail!("unable to allocate temporary file for {label}")
+}
+
+fn write_new_temp_file(path: &Path, contents: &str) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         use std::os::unix::fs::PermissionsExt;
         let mut file = fs::OpenOptions::new()
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .write(true)
             .mode(0o600)
             .open(path)
-            .with_context(|| format!("unable to open temporary file {}", path.display()))?;
+            .with_context(|| format!("unable to create temporary file {}", path.display()))?;
         file.write_all(contents.as_bytes())
             .with_context(|| format!("unable to write temporary file {}", path.display()))?;
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))
@@ -104,22 +134,17 @@ pub(crate) fn write_editor_temp_file(path: &Path, contents: &str) -> Result<()> 
     }
     #[cfg(not(unix))]
     {
-        fs::write(path, contents)
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(path)
+            .with_context(|| format!("unable to create temporary file {}", path.display()))?;
+        file.write_all(contents.as_bytes())
             .with_context(|| format!("unable to write temporary file {}", path.display()))?;
         Ok(())
     }
 }
 
-pub(crate) fn editor_temp_path(label: &str) -> PathBuf {
-    let mut path = std::env::temp_dir();
-    let pid = std::process::id();
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    path.push(format!("lazycompass_{label}_{pid}_{nanos}.tmp"));
-    path
-}
 pub(crate) fn is_editor_cancelled(contents: &str, initial: &str) -> bool {
     let trimmed = contents.trim();
     trimmed.is_empty() || trimmed == initial.trim()
@@ -127,7 +152,9 @@ pub(crate) fn is_editor_cancelled(contents: &str, initial: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_editor_command;
+    use super::{create_secure_editor_temp_file, parse_editor_command, write_new_temp_file};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn parse_editor_command_handles_quotes() {
@@ -142,5 +169,43 @@ mod tests {
     #[test]
     fn parse_editor_command_rejects_unclosed_quotes() {
         assert!(parse_editor_command("nvim -c \"oops").is_err());
+    }
+
+    #[test]
+    fn create_secure_editor_temp_file_writes_contents() {
+        let path =
+            create_secure_editor_temp_file("query", "json", "{\"filter\":{}}").expect("create");
+        let contents = fs::read_to_string(&path).expect("read temp file");
+        assert_eq!(contents, "{\"filter\":{}}");
+        let _ = fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_new_temp_file_rejects_symlink_targets() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "lazycompass_tui_editor_test_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("create root");
+        let target = root.join("target.json");
+        let link = root.join("link.json");
+        fs::write(&target, "old").expect("write target");
+        symlink(&target, &link).expect("create symlink");
+
+        let err = write_new_temp_file(&link, "{}").expect_err("expected symlink failure");
+        assert!(
+            err.downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists)
+        );
+        assert_eq!(fs::read_to_string(&target).expect("read target"), "old");
+
+        let _ = fs::remove_dir_all(root);
     }
 }

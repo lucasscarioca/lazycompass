@@ -1,14 +1,13 @@
 use anyhow::{Context, Result};
-use lazycompass_core::{Config, LoggingConfig, WriteGuard};
+use lazycompass_core::{Config, LoggingConfig};
 use lazycompass_storage::{ConfigPaths, log_file_path};
 use std::fs;
-use std::io::stderr;
 use std::path::Path;
 use tracing_subscriber::filter::{LevelFilter, Targets};
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 
-pub(crate) fn init_logging(paths: &ConfigPaths, config: &Config, guard: WriteGuard) -> Result<()> {
+pub(crate) fn init_logging(paths: &ConfigPaths, config: &Config) -> Result<()> {
     let (level, warning) = parse_log_level(config.logging.level.as_deref());
     if let Some(warning) = warning {
         eprintln!("warning: {warning}");
@@ -20,27 +19,23 @@ pub(crate) fn init_logging(paths: &ConfigPaths, config: &Config, guard: WriteGua
         .with_target("lazycompass_mongo", level)
         .with_target("lazycompass_core", level)
         .with_default(LevelFilter::WARN);
-    let writer = if guard.ensure_write_allowed("write logs").is_err() {
-        BoxMakeWriter::new(stderr)
-    } else {
-        let log_path = log_file_path(paths, config);
-        if let Some(parent) = log_path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("unable to create log directory {}", parent.display()))?;
-        }
-        rotate_logs_if_needed(&log_path, &config.logging)?;
-        let _ = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-            .with_context(|| format!("unable to open log file {}", log_path.display()))?;
-        let file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-            .with_context(|| format!("unable to open log file {}", log_path.display()))?;
-        BoxMakeWriter::new(file)
-    };
+    let log_path = log_file_path(paths, config);
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("unable to create log directory {}", parent.display()))?;
+    }
+    rotate_logs_if_needed(&log_path, &config.logging)?;
+    let _ = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .with_context(|| format!("unable to open log file {}", log_path.display()))?;
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .with_context(|| format!("unable to open log file {}", log_path.display()))?;
+    let writer = BoxMakeWriter::new(file);
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_ansi(false)
         .with_target(false)

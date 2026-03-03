@@ -6,6 +6,9 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+- Security: create TUI editor temp files with `create_new` semantics so symlinks and collisions cannot clobber unrelated files before the editor opens.
+- UX: scope `--dangerously-enable-write` to MongoDB write operations only; local config edits, saved query/aggregation writes, exports, and logging stay available without it.
+- Config: reject symlinked paths in `config edit`, preserve comments/unknown keys when appending connections, and let TUI repo/global adds override same-name connections from the other scope in memory.
 - Docs: harden cross-links between markdown files, retarget stale repo guidance to existing docs, and sync the playground QA guide with current write-safety behavior.
 - CLI: expand `--help` output with clearer command summaries, safer flag descriptions, and compact examples for both users and agents.
 - Security: harden storage writes against symlink traversal and non-atomic saves; isolate repo/global `.env` resolution; require secure temp files for CLI edit flows.

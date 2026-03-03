@@ -12,6 +12,9 @@ LazyCompass is pre-1.0. Breaking changes may happen in minor releases until 1.0;
 
 Prebuilt binaries from GitHub releases:
 
+- Supported release targets today: Linux x64, macOS x64, macOS arm64.
+- Other platforms can still use `cargo install --path . -p lazycompass --locked`.
+
 ```bash
 ./install.sh
 ```
@@ -90,6 +93,8 @@ lazycompass
 lazycompass --dangerously-enable-write
 ```
 
+`--dangerously-enable-write` only enables MongoDB write operations. Local actions like saving queries/aggregations, editing config, exporting results, and clipboard copy remain available without it.
+
 Env var naming:
 
 - LazyCompass does not require a fixed URI var name. It resolves whatever you reference in config (`${VAR}`).
@@ -99,7 +104,7 @@ Env var naming:
 - Query and aggregation execution stops after 10,000 result documents; narrow the scope or add `--limit` for large result sets.
 - Insecure Mongo connections are rejected by default; use `--allow-insecure` only for explicit local/trusted exceptions.
 
-Write actions open your `$VISUAL` or `$EDITOR` for JSON editing (command + args only; no shell expansion).
+MongoDB write actions open your `$VISUAL` or `$EDITOR` for JSON editing (command + args only; no shell expansion).
 
 Documents screen keys: `i` insert, `e` edit, `d` delete, `x` export results, `y` copy results, `Q` save query, `A` save aggregation, `r` run saved query, `a` run saved aggregation. Collections screen key: `I` list indexes. Connections screen key: `n` add connection.
 

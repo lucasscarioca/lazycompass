@@ -3,6 +3,12 @@ name = "lazycompass-mongo"
 version = "0.9.0"
 edition = "2024"
 license = "MIT"
+description = "MongoDB execution layer for LazyCompass"
+repository = "https://github.com/lucasscarioca/lazycompass"
+homepage = "https://github.com/lucasscarioca/lazycompass"
+readme = "../README.md"
+rust-version = "1.85"
+publish = false
 
 [dependencies]
 anyhow = { workspace = true }

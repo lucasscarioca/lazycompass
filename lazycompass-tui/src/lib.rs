@@ -51,8 +51,7 @@ mod terminal;
 mod theme;
 
 use editor::{
-    editor_temp_path, is_editor_cancelled, resolve_editor, run_editor_command,
-    write_editor_temp_file,
+    create_secure_editor_temp_file, is_editor_cancelled, resolve_editor, run_editor_command,
 };
 use errors::format_error;
 use formatting::{connection_label, document_id, document_preview, format_bson, format_document};
