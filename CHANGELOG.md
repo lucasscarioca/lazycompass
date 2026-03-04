@@ -6,6 +6,10 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-03-04
+
+- CI: allow the Docker playground integration test to opt into insecure localhost Mongo explicitly so tagged release validation matches the current runtime security model.
+
 ## [0.9.5] - 2026-03-04
 
 - Release: gate tagged releases behind full verify/build/audit jobs, publish GitHub releases as drafts until all artifacts upload, and document release trust/community files for v1 readiness.

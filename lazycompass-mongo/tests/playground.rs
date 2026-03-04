@@ -42,7 +42,7 @@ async fn playground_query_and_aggregation() -> Result<()> {
         }],
         theme: ThemeConfig::default(),
         logging: LoggingConfig::default(),
-        allow_insecure: None,
+        allow_insecure: Some(true),
         timeouts: TimeoutConfig {
             connect_ms: Some(5_000),
             query_ms: Some(5_000),
