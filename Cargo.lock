@@ -1140,7 +1140,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "lazycompass"
-version = "0.9.0"
+version = "0.9.5"
 dependencies = [
  "anyhow",
  "clap",
@@ -1158,7 +1158,7 @@ dependencies = [
 
 [[package]]
 name = "lazycompass-core"
-version = "0.9.0"
+version = "0.9.5"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
@@ -1166,7 +1166,7 @@ dependencies = [
 
 [[package]]
 name = "lazycompass-mongo"
-version = "0.9.0"
+version = "0.9.5"
 dependencies = [
  "anyhow",
  "futures",
@@ -1178,7 +1178,7 @@ dependencies = [
 
 [[package]]
 name = "lazycompass-output"
-version = "0.9.0"
+version = "0.9.5"
 dependencies = [
  "anyhow",
  "lazycompass-core",
@@ -1188,7 +1188,7 @@ dependencies = [
 
 [[package]]
 name = "lazycompass-storage"
-version = "0.9.0"
+version = "0.9.5"
 dependencies = [
  "anyhow",
  "dirs",
@@ -1201,7 +1201,7 @@ dependencies = [
 
 [[package]]
 name = "lazycompass-tui"
-version = "0.9.0"
+version = "0.9.5"
 dependencies = [
  "anyhow",
  "base64",

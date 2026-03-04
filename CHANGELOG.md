@@ -6,6 +6,8 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-03-04
+
 - Release: gate tagged releases behind full verify/build/audit jobs, publish GitHub releases as drafts until all artifacts upload, and document release trust/community files for v1 readiness.
 - Security: auto-normalize config and saved-spec permissions during storage load instead of only warning.
 - Security: make `lazycompass upgrade` install verified release artifacts directly instead of downloading and executing a remote installer script.
