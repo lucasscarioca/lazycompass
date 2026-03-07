@@ -56,7 +56,8 @@ Editor command:
 Config editing:
 
 - `lazycompass config edit` opens the resolved config in your editor.
-- `lazycompass config add-connection` adds a connection interactively.
+- `lazycompass config add-connection` adds a connection with 3 CLI prompts by default: URI, optional `default_database`, and name.
+- `lazycompass config add-connection --editor` opens the editable template in your editor instead.
 
 ## Config schema
 

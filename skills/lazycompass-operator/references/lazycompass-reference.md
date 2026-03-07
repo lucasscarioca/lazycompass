@@ -80,8 +80,10 @@ Setup and config:
 
 ```bash
 lazycompass init
+lazycompass init --editor
 lazycompass config edit
 lazycompass config add-connection
+lazycompass config add-connection --editor
 ```
 
 Read operations:

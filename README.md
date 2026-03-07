@@ -62,10 +62,16 @@ sha256sum -c lazycompass-linux-x64.tar.gz.sha256 2>/dev/null || shasum -a 256 -c
 Quick start (existing repo):
 
 1. `cd` into the repo (or any subdirectory inside it).
-2. Run the setup wizard (creates/updates `.lazycompass/config.toml` and adds a connection):
+2. Run the setup wizard and answer 3 CLI prompts for URI, optional default database, and connection name (creates/updates `.lazycompass/config.toml` and adds a connection):
 
 ```bash
 lazycompass init
+```
+
+If you prefer editing a template in `$VISUAL`/`$EDITOR`, use:
+
+```bash
+lazycompass init --editor
 ```
 
 3. If your connection URI in config uses env interpolation (example below), set that variable:
@@ -154,6 +160,7 @@ Manage config and data:
 lazycompass init
 lazycompass config edit
 lazycompass config add-connection
+lazycompass config add-connection --editor
 lazycompass --dangerously-enable-write insert --db lazycompass --collection users --document '{"email": "a@example.com"}'
 lazycompass --dangerously-enable-write update --db lazycompass --collection users --id '{"$oid":"64e1f2b4c2a3e02c9a0a9c10"}' --document '{"email": "a@example.com", "active": true}'
 lazycompass --dangerously-enable-write insert --collection users --document '{"email": "a@example.com"}' # uses connection default_database

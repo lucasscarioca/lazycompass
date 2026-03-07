@@ -233,7 +233,7 @@ pub(crate) struct ConfigArgs {
 #[derive(Args)]
 #[command(
     about = "Bootstrap config and add a first connection",
-    long_about = "Create or reuse the target config scope, then open an interactive connection template. Repo config is preferred when a repo is detected unless you pass --global."
+    long_about = "Create or reuse the target config scope, then add a connection with CLI prompts by default. Use --editor to open the editable template instead. Repo config is preferred when a repo is detected unless you pass --global."
 )]
 pub(crate) struct InitArgs {
     #[arg(
@@ -245,14 +245,32 @@ pub(crate) struct InitArgs {
 
     #[arg(long, group = "scope", help = "Use repo config under .lazycompass")]
     pub(crate) repo: bool,
+
+    #[arg(
+        long,
+        help = "Open a connection template in your editor instead of using CLI prompts"
+    )]
+    pub(crate) editor: bool,
 }
 
 #[derive(Subcommand)]
 pub(crate) enum ConfigCommands {
     #[command(about = "Open the resolved config file in your editor")]
     Edit,
-    #[command(about = "Add a connection entry with an editable template")]
-    AddConnection,
+    #[command(
+        about = "Add a connection entry with CLI prompts or an editor template",
+        long_about = "Add a connection entry with CLI prompts by default. Use --editor to open the editable template instead."
+    )]
+    AddConnection(AddConnectionArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct AddConnectionArgs {
+    #[arg(
+        long,
+        help = "Open a connection template in your editor instead of using CLI prompts"
+    )]
+    pub(crate) editor: bool,
 }
 
 #[derive(Args)]
