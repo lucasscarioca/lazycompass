@@ -6,6 +6,12 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-03-10
+
+- UX: accept `ObjectId("...")` and `ISODate("...")` in CLI/TUI query, aggregation, and document-edit payloads, then normalize saved and reopened content to Extended JSON.
+- UX: render JSON results and reopened editor payloads with relaxed Extended JSON so date fields stay readable.
+- Docs: document shell-style BSON input sugar and normalized Extended JSON persistence in the README and query format reference.
+
 ## [0.10.1] - 2026-03-10
 
 - Docs: restructure the README into a stronger release-facing landing page with a clearer pitch, workflow framing, and linked docs.

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use lazycompass_mongo::Bson;
+use lazycompass_mongo::{Bson, parse_json_value as parse_bson_value};
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -57,9 +57,7 @@ pub(crate) fn read_document_input(
 }
 
 pub(crate) fn parse_json_value(label: &str, value: &str) -> Result<Bson> {
-    let json: serde_json::Value =
-        serde_json::from_str(value).with_context(|| format!("invalid JSON in {label}"))?;
-    Bson::try_from(json).with_context(|| format!("invalid JSON in {label}"))
+    parse_bson_value(label, value)
 }
 
 pub(crate) fn create_secure_temp_file(
@@ -238,6 +236,13 @@ mod tests {
     fn parse_json_value_parses_valid_json() {
         let value = parse_json_value("id", r#""abc""#).expect("parse json");
         assert_eq!(value, Bson::String("abc".to_string()));
+    }
+
+    #[test]
+    fn parse_json_value_parses_shell_object_id() {
+        let value = parse_json_value("id", r#"ObjectId("64e1f2b4c2a3e02c9a0a9c10")"#)
+            .expect("parse object id");
+        assert!(matches!(value, Bson::ObjectId(_)));
     }
 
     #[test]

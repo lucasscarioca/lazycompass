@@ -161,6 +161,10 @@ lazycompass indexes --db app --collection users --table
 
 Use the CLI for saved queries, table output, and script-friendly JSON runs.
 
+Inline query, aggregation, and write payloads accept normal JSON plus `ObjectId("...")` and
+`ISODate("...")` input sugar. LazyCompass normalizes saved and reopened payloads back to valid
+Extended JSON.
+
 Manage config and data:
 
 ```bash
@@ -193,7 +197,9 @@ Useful keys:
 - Insecure Mongo connections are rejected by default unless `--allow-insecure` is set
 - Query and aggregation execution stops after 10,000 result documents
 
-MongoDB write actions open `$VISUAL` or `$EDITOR` for JSON editing. Editor commands are parsed as command plus args only, without shell expansion.
+MongoDB write actions open `$VISUAL` or `$EDITOR` for JSON editing. Editors accept normal JSON plus
+`ObjectId("...")` and `ISODate("...")`, then normalize back to valid Extended JSON when saved.
+Editor commands are parsed as command plus args only, without shell expansion.
 
 ## Configuration and Saved Specs
 

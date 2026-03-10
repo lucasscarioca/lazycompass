@@ -7,6 +7,7 @@ use lazycompass_core::{
 };
 use mongodb::{
     Client, bson,
+    bson::{DateTime, oid::ObjectId},
     options::{AggregateOptions, ClientOptions, FindOptions},
 };
 use serde_json::Value;
@@ -425,19 +426,56 @@ fn ensure_document_deleted(deleted_count: u64, database: &str, collection: &str)
     Ok(())
 }
 
-pub fn parse_json_document(label: &str, value: &str) -> Result<Document> {
+pub fn normalize_json_text(value: &str) -> Result<String> {
+    preprocess_shell_literals(value)
+}
+
+pub fn parse_json_value(label: &str, value: &str) -> Result<Bson> {
+    let normalized =
+        normalize_json_text(value).with_context(|| format!("invalid JSON in {label}"))?;
     let json: Value =
-        serde_json::from_str(value).with_context(|| format!("invalid JSON in {label}"))?;
-    let bson = Bson::try_from(json).with_context(|| format!("invalid JSON in {label}"))?;
+        serde_json::from_str(&normalized).with_context(|| format!("invalid JSON in {label}"))?;
+    Bson::try_from(json).with_context(|| format!("invalid JSON in {label}"))
+}
+
+pub fn parse_json_document(label: &str, value: &str) -> Result<Document> {
+    let bson = parse_json_value(label, value)?;
     match bson {
         Bson::Document(document) => Ok(document),
         _ => anyhow::bail!("{label} must be a JSON object"),
     }
 }
 
+pub fn render_relaxed_extjson(value: &Bson) -> Value {
+    value.clone().into_relaxed_extjson()
+}
+
+pub fn render_relaxed_extjson_string(value: &Bson) -> String {
+    match render_relaxed_extjson(value) {
+        Value::String(value) => value,
+        Value::Null => "null".to_string(),
+        value => value.to_string(),
+    }
+}
+
+pub fn render_relaxed_extjson_document(document: &Document) -> Result<String> {
+    serde_json::to_string_pretty(&Bson::Document(document.clone()).into_relaxed_extjson())
+        .context("unable to serialize document")
+}
+
+pub fn render_relaxed_extjson_documents(documents: &[Document]) -> Result<String> {
+    let values = documents
+        .iter()
+        .cloned()
+        .map(Bson::Document)
+        .map(|value| value.into_relaxed_extjson())
+        .collect::<Vec<_>>();
+    serde_json::to_string_pretty(&Value::Array(values))
+        .context("unable to serialize results as JSON")
+}
+
 fn parse_json_pipeline(value: &str) -> Result<Vec<Document>> {
-    let json: Value = serde_json::from_str(value).context("invalid JSON in pipeline")?;
-    let bson = Bson::try_from(json).context("invalid JSON in pipeline")?;
+    let bson = parse_json_value("pipeline", value).context("invalid JSON in pipeline")?;
     match bson {
         Bson::Array(items) => items
             .into_iter()
@@ -462,11 +500,134 @@ fn find_pipeline_write_stage(pipeline: &[Document]) -> Option<&'static str> {
     None
 }
 
+fn preprocess_shell_literals(input: &str) -> Result<String> {
+    let mut output = String::with_capacity(input.len());
+    let mut chars = input.char_indices().peekable();
+    let mut in_double = false;
+    let mut escaped = false;
+
+    while let Some((index, ch)) = chars.next() {
+        if in_double {
+            output.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_double = false;
+            }
+            continue;
+        }
+
+        if ch == '"' {
+            in_double = true;
+            output.push(ch);
+            continue;
+        }
+
+        if ch == 'O' && input[index..].starts_with("ObjectId") {
+            let (replacement, next_index) = parse_shell_literal(input, index, "ObjectId")?;
+            output.push_str(&replacement);
+            advance_chars_to(&mut chars, next_index);
+            continue;
+        }
+
+        if ch == 'I' && input[index..].starts_with("ISODate") {
+            let (replacement, next_index) = parse_shell_literal(input, index, "ISODate")?;
+            output.push_str(&replacement);
+            advance_chars_to(&mut chars, next_index);
+            continue;
+        }
+
+        output.push(ch);
+    }
+
+    Ok(output)
+}
+
+fn advance_chars_to(chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>, target: usize) {
+    while chars.peek().is_some_and(|(index, _)| *index < target) {
+        chars.next();
+    }
+}
+
+fn parse_shell_literal(input: &str, start: usize, kind: &str) -> Result<(String, usize)> {
+    let mut index = start + kind.len();
+    index = skip_ascii_whitespace(input, index);
+    expect_char(input, index, '(')?;
+    index += 1;
+    index = skip_ascii_whitespace(input, index);
+
+    let (value, next_index) = parse_quoted_literal(input, index)?;
+    let normalized = match kind {
+        "ObjectId" => {
+            ObjectId::parse_str(&value).with_context(|| format!("invalid {kind} literal"))?;
+            serde_json::json!({ "$oid": value }).to_string()
+        }
+        "ISODate" => {
+            DateTime::parse_rfc3339_str(&value)
+                .with_context(|| format!("invalid {kind} literal"))?;
+            serde_json::json!({ "$date": value }).to_string()
+        }
+        _ => anyhow::bail!("unsupported shell literal {kind}"),
+    };
+
+    index = skip_ascii_whitespace(input, next_index);
+    expect_char(input, index, ')')?;
+    Ok((normalized, index + 1))
+}
+
+fn skip_ascii_whitespace(input: &str, mut index: usize) -> usize {
+    while let Some(ch) = input[index..].chars().next() {
+        if !ch.is_ascii_whitespace() {
+            break;
+        }
+        index += ch.len_utf8();
+    }
+    index
+}
+
+fn expect_char(input: &str, index: usize, expected: char) -> Result<()> {
+    match input[index..].chars().next() {
+        Some(ch) if ch == expected => Ok(()),
+        _ => anyhow::bail!("expected '{expected}'"),
+    }
+}
+
+fn parse_quoted_literal(input: &str, start: usize) -> Result<(String, usize)> {
+    let quote = input[start..]
+        .chars()
+        .next()
+        .filter(|ch| *ch == '"' || *ch == '\'')
+        .ok_or_else(|| anyhow::anyhow!("expected quoted string"))?;
+    let mut index = start + quote.len_utf8();
+    let mut value = String::new();
+    let mut escaped = false;
+
+    while let Some(ch) = input[index..].chars().next() {
+        index += ch.len_utf8();
+        if escaped {
+            value.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == quote {
+            return Ok((value, index));
+        }
+        value.push(ch);
+    }
+
+    anyhow::bail!("unterminated quoted string")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use lazycompass_core::ConnectionSpec;
-    use mongodb::bson::oid::ObjectId;
 
     fn config_with_connections(connections: Vec<ConnectionSpec>) -> Config {
         Config {
@@ -562,6 +723,95 @@ mod tests {
     #[test]
     fn parse_json_document_rejects_invalid_json() {
         let err = parse_json_document("filter", "{invalid").expect_err("expected parse error");
+        assert!(err.to_string().contains("invalid JSON in filter"));
+    }
+
+    #[test]
+    fn parse_json_document_supports_shell_object_id() {
+        let oid = ObjectId::new();
+        let value = format!(r#"{{ "_id": ObjectId("{oid}") }}"#);
+        let doc = parse_json_document("filter", &value).expect("parse shell object id");
+        assert_eq!(doc.get("_id"), Some(&Bson::ObjectId(oid)));
+    }
+
+    #[test]
+    fn parse_json_document_supports_shell_iso_date() {
+        let value = r#"{ "createdAt": ISODate("2026-03-10T12:00:00Z") }"#;
+        let doc = parse_json_document("filter", value).expect("parse shell iso date");
+        match doc.get("createdAt") {
+            Some(Bson::DateTime(date)) => {
+                assert_eq!(
+                    date.try_to_rfc3339_string().expect("rfc3339"),
+                    "2026-03-10T12:00:00Z"
+                );
+            }
+            other => panic!("unexpected createdAt value: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_json_value_supports_single_quoted_shell_literals() {
+        let oid = ObjectId::new();
+        let value = format!(
+            r#"{{ "_id": ObjectId('{oid}'), "createdAt": ISODate('2026-03-10T12:00:00Z') }}"#
+        );
+        let doc = parse_json_document("filter", &value).expect("parse single-quoted literals");
+        assert_eq!(doc.get("_id"), Some(&Bson::ObjectId(oid)));
+        assert!(matches!(doc.get("createdAt"), Some(Bson::DateTime(_))));
+    }
+
+    #[test]
+    fn parse_json_pipeline_supports_shell_literals() {
+        let oid = ObjectId::new();
+        let value = format!(
+            r#"[{{ "$match": {{ "_id": ObjectId("{oid}"), "createdAt": {{ "$gte": ISODate("2026-03-10T12:00:00Z") }} }} }}]"#
+        );
+        let pipeline = parse_json_pipeline(&value).expect("parse shell pipeline");
+        let stage = pipeline.first().expect("first stage");
+        let filter = stage.get_document("$match").expect("match doc");
+        assert_eq!(filter.get("_id"), Some(&Bson::ObjectId(oid)));
+        let created_at = filter
+            .get_document("createdAt")
+            .expect("createdAt doc")
+            .get("$gte");
+        assert!(matches!(created_at, Some(Bson::DateTime(_))));
+    }
+
+    #[test]
+    fn normalize_json_text_rewrites_shell_literals_to_extjson() {
+        let oid = ObjectId::new();
+        let input = format!(
+            r#"{{ "_id": ObjectId("{oid}"), "createdAt": ISODate("2026-03-10T12:00:00Z") }}"#
+        );
+        let normalized = normalize_json_text(&input).expect("normalize");
+        assert!(normalized.contains(r#""$oid""#));
+        assert!(normalized.contains(r#""$date":"2026-03-10T12:00:00Z""#));
+    }
+
+    #[test]
+    fn render_relaxed_extjson_document_uses_readable_date_strings() {
+        let mut document = Document::new();
+        document.insert("_id", ObjectId::new());
+        document.insert(
+            "createdAt",
+            Bson::DateTime(DateTime::parse_rfc3339_str("2026-03-10T12:00:00Z").expect("date")),
+        );
+        let rendered = render_relaxed_extjson_document(&document).expect("render");
+        assert!(rendered.contains(r#""$oid""#));
+        assert!(rendered.contains(r#""$date": "2026-03-10T12:00:00Z""#));
+    }
+
+    #[test]
+    fn parse_json_document_rejects_invalid_shell_object_id() {
+        let err = parse_json_document("filter", r#"{ "_id": ObjectId("bad") }"#)
+            .expect_err("expected invalid object id");
+        assert!(err.to_string().contains("invalid JSON in filter"));
+    }
+
+    #[test]
+    fn parse_json_document_rejects_invalid_shell_iso_date() {
+        let err = parse_json_document("filter", r#"{ "createdAt": ISODate("not-a-date") }"#)
+            .expect_err("expected invalid iso date");
         assert!(err.to_string().contains("invalid JSON in filter"));
     }
 

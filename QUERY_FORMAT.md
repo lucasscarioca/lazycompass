@@ -54,6 +54,14 @@ Example:
 }
 ```
 
+Input sugar:
+
+- `ObjectId("64e1f2b4c2a3e02c9a0a9c10")`
+- `ISODate("2026-03-10T12:00:00Z")`
+
+LazyCompass accepts those forms in CLI and TUI editors, then normalizes them to Extended JSON
+when saving or reopening payloads.
+
 ## SavedAggregation JSON payload
 
 Payload is a JSON array (Mongo pipeline), metadata-free.
@@ -66,6 +74,9 @@ Example:
   { "$sort": { "total": -1 } }
 ]
 ```
+
+Pipeline stages also accept `ObjectId("...")` and `ISODate("...")` as input sugar and normalize
+them back to Extended JSON when persisted.
 
 ## Runtime target resolution
 

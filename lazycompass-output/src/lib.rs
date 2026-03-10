@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use lazycompass_core::OutputFormat;
-use lazycompass_mongo::{Bson, Document};
+use lazycompass_mongo::{
+    Bson, Document, render_relaxed_extjson_documents, render_relaxed_extjson_string,
+};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -15,9 +17,7 @@ pub enum ExportNameSource {
 
 pub fn render_documents(format: OutputFormat, documents: &[Document]) -> Result<String> {
     match format {
-        OutputFormat::JsonPretty => {
-            serde_json::to_string_pretty(documents).context("unable to serialize results as JSON")
-        }
+        OutputFormat::JsonPretty => render_relaxed_extjson_documents(documents),
         OutputFormat::Table => Ok(format_table(documents)),
         OutputFormat::Csv => Ok(format_csv(documents)),
     }
@@ -212,12 +212,12 @@ fn format_separator(widths: &[usize]) -> String {
 
 fn format_csv_value(value: &Bson) -> String {
     match value {
-        Bson::Document(document) => {
-            serde_json::to_string(document).unwrap_or_else(|_| format!("{document:?}"))
-        }
-        Bson::Array(values) => {
-            serde_json::to_string(values).unwrap_or_else(|_| format!("{values:?}"))
-        }
+        Bson::Document(document) => Bson::Document(document.clone())
+            .into_relaxed_extjson()
+            .to_string(),
+        Bson::Array(values) => Bson::Array(values.clone())
+            .into_relaxed_extjson()
+            .to_string(),
         _ => format_scalar(value),
     }
 }
@@ -244,12 +244,7 @@ fn is_scalar(value: &Bson) -> bool {
 }
 
 fn format_scalar(value: &Bson) -> String {
-    match serde_json::to_value(value) {
-        Ok(serde_json::Value::String(value)) => value,
-        Ok(serde_json::Value::Null) => "null".to_string(),
-        Ok(value) => value.to_string(),
-        Err(_) => format!("{value:?}"),
-    }
+    render_relaxed_extjson_string(value)
 }
 
 #[cfg(test)]
@@ -259,7 +254,7 @@ mod tests {
         write_documents, write_rendered_output,
     };
     use lazycompass_core::OutputFormat;
-    use lazycompass_mongo::{Bson, Document};
+    use lazycompass_mongo::{Bson, Document, parse_json_document};
     use std::fs;
 
     fn temp_path(name: &str) -> std::path::PathBuf {
@@ -287,6 +282,20 @@ mod tests {
 
         assert!(output.contains("\"name\": \"nora\""));
         assert!(output.starts_with('['));
+    }
+
+    #[test]
+    fn render_json_uses_relaxed_extjson_for_dates() {
+        let documents = vec![
+            parse_json_document(
+                "document",
+                r#"{ "createdAt": { "$date": "2026-03-10T12:00:00Z" } }"#,
+            )
+            .expect("parse document"),
+        ];
+        let output = render_documents(OutputFormat::JsonPretty, &documents).expect("render json");
+
+        assert!(output.contains(r#""$date": "2026-03-10T12:00:00Z""#));
     }
 
     #[test]
@@ -407,6 +416,22 @@ mod tests {
     fn format_bson_scalar_matches_existing_string_behavior() {
         assert_eq!(format_bson_scalar(&Bson::String("abc".to_string())), "abc");
         assert_eq!(format_bson_scalar(&Bson::Int32(3)), "3");
+    }
+
+    #[test]
+    fn format_bson_scalar_uses_relaxed_extjson_for_dates() {
+        let value = parse_json_document(
+            "document",
+            r#"{ "createdAt": { "$date": "2026-03-10T12:00:00Z" } }"#,
+        )
+        .expect("parse document")
+        .get("createdAt")
+        .expect("createdAt")
+        .clone();
+        assert_eq!(
+            format_bson_scalar(&value),
+            r#"{"$date":"2026-03-10T12:00:00Z"}"#
+        );
     }
 
     #[test]

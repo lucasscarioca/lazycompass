@@ -1,4 +1,5 @@
 use super::*;
+use lazycompass_mongo::{render_relaxed_extjson_document, render_relaxed_extjson_string};
 
 const MAX_PREVIEW_SERIALIZE_BYTES: usize = 4 * 1024;
 const MAX_DETAIL_SERIALIZE_BYTES: usize = 256 * 1024;
@@ -12,12 +13,7 @@ pub(crate) fn document_id(document: &Document) -> Result<Bson> {
 }
 
 pub(crate) fn format_bson(value: &Bson) -> String {
-    match serde_json::to_value(value) {
-        Ok(serde_json::Value::String(value)) => value,
-        Ok(serde_json::Value::Null) => "null".to_string(),
-        Ok(value) => value.to_string(),
-        Err(_) => format!("{value:?}"),
-    }
+    render_relaxed_extjson_string(value)
 }
 
 pub(crate) fn connection_label(connection: &ConnectionSpec) -> String {
@@ -34,7 +30,9 @@ pub(crate) fn document_preview(document: &Document) -> String {
         return large_document_summary(document, size);
     }
 
-    let mut json = serde_json::to_string(document).unwrap_or_else(|_| format!("{document:?}"));
+    let mut json = Bson::Document(document.clone())
+        .into_relaxed_extjson()
+        .to_string();
     json = json.replace('\n', " ");
     if json.len() > 120 {
         json.truncate(117);
@@ -57,7 +55,7 @@ pub(crate) fn format_document(document: &Document) -> Vec<String> {
         ];
     }
 
-    match serde_json::to_string_pretty(document) {
+    match render_relaxed_extjson_document(document) {
         Ok(output) => output.lines().map(|line| line.to_string()).collect(),
         Err(_) => vec![format!("{document:?}")],
     }

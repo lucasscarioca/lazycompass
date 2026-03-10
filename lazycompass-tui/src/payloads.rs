@@ -1,4 +1,5 @@
 use super::*;
+use lazycompass_mongo::normalize_json_text;
 pub(crate) fn render_inline_query_template() -> Result<String> {
     serde_json::to_string_pretty(&serde_json::json!({
         "filter": {},
@@ -11,8 +12,9 @@ pub(crate) fn render_inline_query_template() -> Result<String> {
 }
 
 pub(crate) fn parse_inline_query_payload(contents: &str) -> Result<InlineQueryPayload> {
+    let contents = normalize_json_text(contents).context("invalid JSON for inline query")?;
     let value: serde_json::Value =
-        serde_json::from_str(contents).context("invalid JSON for inline query")?;
+        serde_json::from_str(&contents).context("invalid JSON for inline query")?;
     let object = value
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("inline query payload must be a JSON object"))?;
@@ -72,8 +74,9 @@ pub(crate) fn parse_query_payload_input(
     contents: &str,
     template: &SavedQuery,
 ) -> Result<SavedQuery> {
+    let contents = normalize_json_text(contents).context("invalid JSON for saved query")?;
     let value: serde_json::Value =
-        serde_json::from_str(contents).context("invalid JSON for saved query")?;
+        serde_json::from_str(&contents).context("invalid JSON for saved query")?;
     let object = value
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("saved query payload must be a JSON object"))?;
@@ -133,8 +136,9 @@ pub(crate) fn render_query_save_template(id: &str, draft: &InlineQueryPayload) -
 }
 
 pub(crate) fn parse_query_save_input(contents: &str, scope: SavedScope) -> Result<SavedQuery> {
+    let contents = normalize_json_text(contents).context("invalid JSON for saved query")?;
     let value: serde_json::Value =
-        serde_json::from_str(contents).context("invalid JSON for saved query")?;
+        serde_json::from_str(&contents).context("invalid JSON for saved query")?;
     let object = value
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("saved query payload must be a JSON object"))?;
@@ -194,8 +198,9 @@ pub(crate) fn render_inline_aggregation_template() -> Result<String> {
 }
 
 pub(crate) fn parse_inline_aggregation_payload(contents: &str) -> Result<InlineAggregationPayload> {
+    let contents = normalize_json_text(contents).context("invalid JSON for inline aggregation")?;
     let pipeline: serde_json::Value =
-        serde_json::from_str(contents).context("invalid JSON for inline aggregation")?;
+        serde_json::from_str(&contents).context("invalid JSON for inline aggregation")?;
     if !pipeline.is_array() {
         anyhow::bail!("inline aggregation payload must be a JSON array");
     }
@@ -208,8 +213,9 @@ pub(crate) fn parse_aggregation_payload_input(
     contents: &str,
     template: &SavedAggregation,
 ) -> Result<SavedAggregation> {
+    let contents = normalize_json_text(contents).context("invalid JSON for saved aggregation")?;
     let pipeline: serde_json::Value =
-        serde_json::from_str(contents).context("invalid JSON for saved aggregation")?;
+        serde_json::from_str(&contents).context("invalid JSON for saved aggregation")?;
     if !pipeline.is_array() {
         anyhow::bail!("saved aggregation payload must be a JSON array");
     }
@@ -240,8 +246,9 @@ pub(crate) fn parse_aggregation_save_input(
     contents: &str,
     scope: SavedScope,
 ) -> Result<SavedAggregation> {
+    let contents = normalize_json_text(contents).context("invalid JSON for saved aggregation")?;
     let value: serde_json::Value =
-        serde_json::from_str(contents).context("invalid JSON for saved aggregation")?;
+        serde_json::from_str(&contents).context("invalid JSON for saved aggregation")?;
     let object = value
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("saved aggregation payload must be a JSON object"))?;
@@ -417,12 +424,50 @@ mod tests {
     }
 
     #[test]
+    fn parse_inline_query_payload_normalizes_shell_literals() {
+        let query = parse_inline_query_payload(
+            r#"{
+                "filter": {
+                    "_id": ObjectId("64e1f2b4c2a3e02c9a0a9c10"),
+                    "createdAt": ISODate("2026-03-10T12:00:00Z")
+                }
+            }"#,
+        )
+        .expect("parse inline query");
+        assert_eq!(
+            query.filter.as_deref(),
+            Some(
+                r#"{"_id":{"$oid":"64e1f2b4c2a3e02c9a0a9c10"},"createdAt":{"$date":"2026-03-10T12:00:00Z"}}"#
+            )
+        );
+    }
+
+    #[test]
     fn parse_inline_aggregation_payload_requires_array() {
         let err =
             parse_inline_aggregation_payload(r#"{ "x": 1 }"#).expect_err("expected array payload");
         assert!(
             err.to_string()
                 .contains("inline aggregation payload must be a JSON array")
+        );
+    }
+
+    #[test]
+    fn parse_inline_aggregation_payload_normalizes_shell_literals() {
+        let aggregation = parse_inline_aggregation_payload(
+            r#"[
+                {
+                    "$match": {
+                        "_id": ObjectId("64e1f2b4c2a3e02c9a0a9c10"),
+                        "createdAt": { "$gte": ISODate("2026-03-10T12:00:00Z") }
+                    }
+                }
+            ]"#,
+        )
+        .expect("parse inline aggregation");
+        assert_eq!(
+            aggregation.pipeline,
+            r#"[{"$match":{"_id":{"$oid":"64e1f2b4c2a3e02c9a0a9c10"},"createdAt":{"$gte":{"$date":"2026-03-10T12:00:00Z"}}}}]"#
         );
     }
 

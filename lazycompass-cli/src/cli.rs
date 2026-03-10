@@ -97,11 +97,20 @@ pub(crate) struct QueryArgs {
     pub(crate) db: Option<String>,
     #[arg(long, help = "Collection name")]
     pub(crate) collection: Option<String>,
-    #[arg(long, help = "Inline Mongo find filter as JSON")]
+    #[arg(
+        long,
+        help = "Inline Mongo find filter as JSON; accepts ObjectId(...) and ISODate(...)"
+    )]
     pub(crate) filter: Option<String>,
-    #[arg(long, help = "Inline Mongo projection as JSON")]
+    #[arg(
+        long,
+        help = "Inline Mongo projection as JSON; accepts ObjectId(...) and ISODate(...)"
+    )]
     pub(crate) projection: Option<String>,
-    #[arg(long, help = "Inline Mongo sort as JSON")]
+    #[arg(
+        long,
+        help = "Inline Mongo sort as JSON; accepts ObjectId(...) and ISODate(...)"
+    )]
     pub(crate) sort: Option<String>,
     #[arg(long, help = "Maximum number of documents to return")]
     pub(crate) limit: Option<u64>,
@@ -133,7 +142,10 @@ pub(crate) struct AggArgs {
     pub(crate) db: Option<String>,
     #[arg(long, help = "Collection name")]
     pub(crate) collection: Option<String>,
-    #[arg(long, help = "Inline Mongo aggregation pipeline as JSON array")]
+    #[arg(
+        long,
+        help = "Inline Mongo aggregation pipeline as JSON array; accepts ObjectId(...) and ISODate(...)"
+    )]
     pub(crate) pipeline: Option<String>,
     #[arg(long, help = "Render output as a table")]
     #[arg(conflicts_with = "csv")]
@@ -160,7 +172,11 @@ pub(crate) struct InsertArgs {
     pub(crate) db: Option<String>,
     #[arg(long, help = "Collection name")]
     pub(crate) collection: Option<String>,
-    #[arg(long, help = "Document JSON passed inline", conflicts_with = "file")]
+    #[arg(
+        long,
+        help = "Document JSON passed inline; accepts ObjectId(...) and ISODate(...)",
+        conflicts_with = "file"
+    )]
     pub(crate) document: Option<String>,
     #[arg(
         long,
@@ -187,12 +203,12 @@ pub(crate) struct UpdateArgs {
     pub(crate) collection: Option<String>,
     #[arg(
         long,
-        help = "Document _id as JSON, for example '\"id\"' or '{\"$oid\":\"...\"}'"
+        help = "Document _id as JSON, for example '\"id\"', '{\"$oid\":\"...\"}', or 'ObjectId(\"...\")'"
     )]
     pub(crate) id: String,
     #[arg(
         long,
-        help = "Replacement document JSON passed inline",
+        help = "Replacement document JSON passed inline; accepts ObjectId(...) and ISODate(...)",
         conflicts_with = "file"
     )]
     pub(crate) document: Option<String>,

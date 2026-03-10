@@ -696,8 +696,7 @@ impl App {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("editor command missing"))?;
         let original_id = document_id(&document)?;
-        let initial =
-            serde_json::to_string_pretty(&document).context("unable to serialize document")?;
+        let initial = lazycompass_mongo::render_relaxed_extjson_document(&document)?;
         let contents = self.open_editor(terminal, editor, "edit", &initial)?;
         if is_editor_cancelled(&contents, &initial) {
             self.message = Some("cancelled".to_string());
