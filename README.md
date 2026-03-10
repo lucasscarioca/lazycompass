@@ -157,9 +157,9 @@ lazycompass agg recent_orders --collection orders --table > report.txt
 lazycompass indexes --db app --collection users --table
 ```
 
-![CLI aggregation output](./assets/readme/lazycompass-cli-aggregation.png)
+![CLI output](./assets/readme/lazycompass-cli.png)
 
-Use the CLI for fast saved-query runs, scripting, and terminal-friendly table output.
+Use the CLI for saved queries, table output, and script-friendly JSON runs.
 
 Manage config and data:
 

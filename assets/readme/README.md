@@ -9,14 +9,13 @@ This folder holds release-facing media used by the top-level README.
 - `lazycompass-tui-savedqueries.png` saved query flow
 - `lazycompass-tui-document.png` document detail
 - `lazycompass-tui-indexes.png` indexes view
-- `lazycompass-cli-aggregation.png` CLI table output
+- `lazycompass-cli.png` CLI query + table output
 
 Other captures kept in this folder:
 
 - `lazycompass-tui-collections.png`
 - `lazycompass-tui-export.png`
 - `lazycompass-tui-help.png`
-- `lazycompass-cli-query-formats.png`
 - `tui-demo.gif` optional future asset
 
 ## Capture goals
@@ -85,4 +84,4 @@ The root README currently uses:
 - `assets/readme/lazycompass-tui-savedqueries.png`
 - `assets/readme/lazycompass-tui-document.png`
 - `assets/readme/lazycompass-tui-indexes.png`
-- `assets/readme/lazycompass-cli-aggregation.png`
+- `assets/readme/lazycompass-cli.png`
