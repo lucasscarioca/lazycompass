@@ -6,6 +6,9 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+- Beta: add Windows x64 (`x86_64-pc-windows-msvc`) CI, release packaging, and `lazycompass upgrade` support.
+- Beta: add Windows editor and clipboard fallbacks so CLI/TUI workflows work without Unix-only defaults.
+
 ## [0.11.0] - 2026-03-10
 
 - UX: accept `ObjectId("...")` and `ISODate("...")` in CLI/TUI query, aggregation, and document-edit payloads, then normalize saved and reopened content to Extended JSON.

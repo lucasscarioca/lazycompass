@@ -8,9 +8,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) fn open_in_editor(path: &Path) -> Result<()> {
-    let editor = env::var("VISUAL")
-        .or_else(|_| env::var("EDITOR"))
-        .unwrap_or_else(|_| "vi".to_string());
+    let editor = default_editor();
     let args = parse_editor_command(&editor)?;
     let (program, rest) = args
         .split_first()
@@ -27,6 +25,24 @@ pub(crate) fn open_in_editor(path: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn default_editor() -> String {
+    env::var("VISUAL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            env::var("EDITOR")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| {
+            if cfg!(windows) {
+                "notepad".to_string()
+            } else {
+                "vi".to_string()
+            }
+        })
 }
 
 pub(crate) fn read_document_input(
@@ -185,7 +201,7 @@ fn parse_editor_command(editor: &str) -> Result<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{create_secure_temp_file, parse_json_value, read_document_input};
+    use super::{create_secure_temp_file, default_editor, parse_json_value, read_document_input};
     use lazycompass_mongo::Bson;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -257,5 +273,26 @@ mod tests {
         let contents = fs::read_to_string(&path).expect("read temp file");
         assert_eq!(contents, "{}");
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn default_editor_prefers_env_vars() {
+        let original_visual = std::env::var_os("VISUAL");
+        let original_editor = std::env::var_os("EDITOR");
+        unsafe {
+            std::env::set_var("VISUAL", "code --wait");
+            std::env::set_var("EDITOR", "nano");
+        }
+
+        assert_eq!(default_editor(), "code --wait");
+
+        match original_visual {
+            Some(value) => unsafe { std::env::set_var("VISUAL", value) },
+            None => unsafe { std::env::remove_var("VISUAL") },
+        }
+        match original_editor {
+            Some(value) => unsafe { std::env::set_var("EDITOR", value) },
+            None => unsafe { std::env::remove_var("EDITOR") },
+        }
     }
 }

@@ -156,12 +156,23 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             archive: lazycompass-linux-x64.tar.gz
+            binary: lazycompass
+            archive_format: tar.gz
           - os: macos-14
             target: x86_64-apple-darwin
             archive: lazycompass-darwin-x64.tar.gz
+            binary: lazycompass
+            archive_format: tar.gz
           - os: macos-14
             target: aarch64-apple-darwin
             archive: lazycompass-darwin-arm64.tar.gz
+            binary: lazycompass
+            archive_format: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: lazycompass-windows-x64.zip
+            binary: lazycompass.exe
+            archive_format: zip
 
     steps:
       - name: Checkout
@@ -177,17 +188,27 @@ jobs:
       - name: Build
         run: cargo build --release -p lazycompass --target ${{ matrix.target }}
 
-      - name: Package and checksum
+      - name: Package tarball
+        if: ${{ matrix.archive_format == 'tar.gz' }}
         run: |
-          tar -czf ${{ matrix.archive }} -C target/${{ matrix.target }}/release lazycompass
+          tar -czf ${{ matrix.archive }} -C target/${{ matrix.target }}/release ${{ matrix.binary }}
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
           else
             shasum -a 256 ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
           fi
 
+      - name: Package zip and checksum
+        if: ${{ matrix.archive_format == 'zip' }}
+        shell: pwsh
+        run: |
+          Compress-Archive -LiteralPath "target/${{ matrix.target }}/release/${{ matrix.binary }}" -DestinationPath "${{ matrix.archive }}"
+          $hash = (Get-FileHash -Algorithm SHA256 "${{ matrix.archive }}").Hash.ToLowerInvariant()
+          "$hash  ${{ matrix.archive }}" | Out-File -Encoding ascii "${{ matrix.archive }}.sha256"
+
       - name: Import GPG key (optional)
         id: import_gpg
+        shell: bash
         env:
           RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
           RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
@@ -202,6 +223,7 @@ jobs:
 
       - name: Sign checksum (optional)
         if: ${{ steps.import_gpg.outputs.fingerprint != '' }}
+        shell: bash
         env:
           RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
         run: |

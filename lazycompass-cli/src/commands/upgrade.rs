@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use std::env;
+use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -69,6 +70,7 @@ impl UpgradePlan {
 
 #[derive(Debug, Clone)]
 struct ReleaseUpgradePlan {
+    target: ReleaseTarget,
     archive_url: String,
     checksum_url: String,
     checksum_sig_url: String,
@@ -84,6 +86,13 @@ struct SourceUpgradePlan {
     install_root: PathBuf,
     version: Option<String>,
     no_modify_path: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReleaseTarget {
+    slug: &'static str,
+    archive_ext: &'static str,
+    binary_name: &'static str,
 }
 
 fn plan_upgrade(args: UpgradeArgs, ctx: UpgradeContext) -> Result<UpgradePlan> {
@@ -110,13 +119,14 @@ fn plan_upgrade_with_install_path(
     }
 
     let target = detect_release_target()?;
-    let asset_name = format!("{APP}-{target}.tar.gz");
+    let asset_name = format!("{APP}-{}.{}", target.slug, target.archive_ext);
     let version = normalize_version(args.version.as_deref())?;
     let archive_url = release_archive_url(repo, version.as_deref(), &asset_name);
     let checksum_url = format!("{archive_url}.sha256");
     let checksum_sig_url = format!("{checksum_url}.sig");
     let temp_dir = create_secure_temp_dir("upgrade", ctx.nonce)?;
     Ok(UpgradePlan::Release(ReleaseUpgradePlan {
+        target,
         archive_url,
         checksum_url,
         checksum_sig_url,
@@ -153,15 +163,32 @@ fn git_repo_url(repo: &str) -> String {
     format!("https://github.com/{repo}")
 }
 
-fn detect_release_target() -> Result<&'static str> {
+fn detect_release_target() -> Result<ReleaseTarget> {
     detect_release_target_from(env::consts::OS, env::consts::ARCH)
 }
 
-fn detect_release_target_from(os: &str, arch: &str) -> Result<&'static str> {
+fn detect_release_target_from(os: &str, arch: &str) -> Result<ReleaseTarget> {
     match (os, arch) {
-        ("linux", "x86_64") => Ok("linux-x64"),
-        ("macos", "x86_64") => Ok("darwin-x64"),
-        ("macos", "aarch64") => Ok("darwin-arm64"),
+        ("linux", "x86_64") => Ok(ReleaseTarget {
+            slug: "linux-x64",
+            archive_ext: "tar.gz",
+            binary_name: APP,
+        }),
+        ("macos", "x86_64") => Ok(ReleaseTarget {
+            slug: "darwin-x64",
+            archive_ext: "tar.gz",
+            binary_name: APP,
+        }),
+        ("macos", "aarch64") => Ok(ReleaseTarget {
+            slug: "darwin-arm64",
+            archive_ext: "tar.gz",
+            binary_name: APP,
+        }),
+        ("windows", "x86_64") => Ok(ReleaseTarget {
+            slug: "windows-x64",
+            archive_ext: "zip",
+            binary_name: "lazycompass.exe",
+        }),
         _ => anyhow::bail!("unsupported platform {os}/{arch} for release upgrades"),
     }
 }
@@ -213,9 +240,6 @@ fn run_release_upgrade(plan: ReleaseUpgradePlan) -> Result<()> {
         .join(format!("{}.sha256.sig", plan.asset_name));
 
     let result = (|| {
-        require_command("curl")?;
-        require_command("tar")?;
-
         download_file(&plan.archive_url, &archive_path)
             .with_context(|| format!("failed to download {}", plan.archive_url))?;
         download_file(&plan.checksum_url, &checksum_path)
@@ -226,10 +250,13 @@ fn run_release_upgrade(plan: ReleaseUpgradePlan) -> Result<()> {
             verify_signature(&checksum_path, &signature_path)?;
         }
 
-        extract_archive(&archive_path, &plan.temp_dir)?;
-        let extracted_binary = plan.temp_dir.join(APP);
+        extract_archive(&plan.target, &archive_path, &plan.temp_dir)?;
+        let extracted_binary = plan.temp_dir.join(plan.target.binary_name);
         if !extracted_binary.is_file() {
-            anyhow::bail!("expected binary '{APP}' in downloaded archive");
+            anyhow::bail!(
+                "expected binary '{}' in downloaded archive",
+                plan.target.binary_name
+            );
         }
 
         replace_binary(&extracted_binary, &plan.install_path)?;
@@ -277,36 +304,128 @@ fn require_command(command: &str) -> Result<()> {
 
 fn find_command(command: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH")?;
+    let candidates = command_candidates(command);
     env::split_paths(&path)
-        .map(|dir| dir.join(command))
+        .flat_map(|dir| candidates.iter().map(move |candidate| dir.join(candidate)))
         .find(|candidate| candidate.is_file())
 }
 
-fn download_file(url: &str, destination: &Path) -> Result<()> {
-    let status = Command::new("curl")
-        .arg("-fsSL")
-        .arg("-o")
-        .arg(destination)
-        .arg(url)
-        .status()
-        .context("failed to execute curl")?;
-    if !status.success() {
-        anyhow::bail!("curl exited with non-zero status");
+fn command_candidates(command: &str) -> Vec<OsString> {
+    let command_path = Path::new(command);
+    if command_path.extension().is_some() {
+        return vec![OsString::from(command)];
     }
-    Ok(())
+
+    #[cfg(windows)]
+    {
+        let path_ext = env::var_os("PATHEXT")
+            .map(|value| {
+                env::split_paths(&value)
+                    .map(|value| value.into_os_string())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|value| !value.is_empty());
+        let mut candidates = vec![OsString::from(command)];
+        for ext in path_ext.unwrap_or_else(|| {
+            vec![
+                OsString::from(".COM"),
+                OsString::from(".EXE"),
+                OsString::from(".BAT"),
+                OsString::from(".CMD"),
+            ]
+        }) {
+            let ext = ext.to_string_lossy();
+            candidates.push(OsString::from(format!("{command}{ext}")));
+        }
+        candidates
+    }
+
+    #[cfg(not(windows))]
+    {
+        vec![OsString::from(command)]
+    }
+}
+
+fn download_file(url: &str, destination: &Path) -> Result<()> {
+    if find_command("curl").is_some() {
+        let status = Command::new("curl")
+            .arg("-fsSL")
+            .arg("-o")
+            .arg(destination)
+            .arg(url)
+            .status()
+            .context("failed to execute curl")?;
+        if !status.success() {
+            anyhow::bail!("curl exited with non-zero status");
+        }
+        return Ok(());
+    }
+
+    #[cfg(windows)]
+    {
+        require_command("powershell")?;
+        let command = format!(
+            "Invoke-WebRequest -UseBasicParsing -Uri '{}' -OutFile '{}'",
+            escape_powershell_single_quoted(url),
+            escape_powershell_single_quoted(&destination.display().to_string())
+        );
+        let status = Command::new("powershell")
+            .arg("-NoProfile")
+            .arg("-NonInteractive")
+            .arg("-Command")
+            .arg(command)
+            .status()
+            .context("failed to execute powershell download")?;
+        if !status.success() {
+            anyhow::bail!("powershell download exited with non-zero status");
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    {
+        anyhow::bail!("curl is required but not installed")
+    }
 }
 
 fn download_optional_file(url: &str, destination: &Path) -> Result<bool> {
-    let status = Command::new("curl")
-        .arg("-fsL")
-        .arg("-o")
-        .arg(destination)
-        .arg(url)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .context("failed to execute curl")?;
-    Ok(status.success())
+    if find_command("curl").is_some() {
+        let status = Command::new("curl")
+            .arg("-fsL")
+            .arg("-o")
+            .arg(destination)
+            .arg(url)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .context("failed to execute curl")?;
+        return Ok(status.success());
+    }
+
+    #[cfg(windows)]
+    {
+        require_command("powershell")?;
+        let command = format!(
+            "try {{ Invoke-WebRequest -UseBasicParsing -Uri '{}' -OutFile '{}' | Out-Null; exit 0 }} catch {{ exit 1 }}",
+            escape_powershell_single_quoted(url),
+            escape_powershell_single_quoted(&destination.display().to_string())
+        );
+        let status = Command::new("powershell")
+            .arg("-NoProfile")
+            .arg("-NonInteractive")
+            .arg("-Command")
+            .arg(command)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .context("failed to execute powershell download")?;
+        return Ok(status.success());
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(false)
+    }
 }
 
 fn verify_checksum(checksum_path: &Path, archive_path: &Path) -> Result<()> {
@@ -342,7 +461,34 @@ fn compute_sha256(path: &Path) -> Result<String> {
     if find_command("shasum").is_some() {
         return command_output_digest(Command::new("shasum").arg("-a").arg("256").arg(path));
     }
-    anyhow::bail!("sha256sum or shasum is required to verify release assets")
+
+    #[cfg(windows)]
+    {
+        if find_command("powershell").is_some() {
+            let output = Command::new("powershell")
+                .arg("-NoProfile")
+                .arg("-NonInteractive")
+                .arg("-Command")
+                .arg(format!(
+                    "(Get-FileHash -Algorithm SHA256 -LiteralPath '{}').Hash.ToLowerInvariant()",
+                    escape_powershell_single_quoted(&path.display().to_string())
+                ))
+                .output()
+                .context("failed to compute sha256 digest with powershell")?;
+            if !output.status.success() {
+                anyhow::bail!("powershell sha256 command exited with non-zero status");
+            }
+            let stdout = String::from_utf8(output.stdout)
+                .context("powershell sha256 output was not valid UTF-8")?;
+            let digest = stdout.trim();
+            if digest.is_empty() {
+                anyhow::bail!("powershell sha256 command returned empty output");
+            }
+            return Ok(digest.to_string());
+        }
+    }
+
+    anyhow::bail!("sha256sum, shasum, or powershell is required to verify release assets")
 }
 
 fn command_output_digest(command: &mut Command) -> Result<String> {
@@ -379,16 +525,39 @@ fn verify_signature(checksum_path: &Path, signature_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn extract_archive(archive_path: &Path, destination: &Path) -> Result<()> {
-    let status = Command::new("tar")
-        .arg("-xzf")
-        .arg(archive_path)
-        .arg("-C")
-        .arg(destination)
-        .status()
-        .context("failed to run tar")?;
-    if !status.success() {
-        anyhow::bail!("tar exited with non-zero status");
+fn extract_archive(target: &ReleaseTarget, archive_path: &Path, destination: &Path) -> Result<()> {
+    match target.archive_ext {
+        "tar.gz" => {
+            require_command("tar")?;
+            let status = Command::new("tar")
+                .arg("-xzf")
+                .arg(archive_path)
+                .arg("-C")
+                .arg(destination)
+                .status()
+                .context("failed to run tar")?;
+            if !status.success() {
+                anyhow::bail!("tar exited with non-zero status");
+            }
+        }
+        "zip" => {
+            require_command("powershell")?;
+            let status = Command::new("powershell")
+                .arg("-NoProfile")
+                .arg("-NonInteractive")
+                .arg("-Command")
+                .arg(format!(
+                    "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
+                    escape_powershell_single_quoted(&archive_path.display().to_string()),
+                    escape_powershell_single_quoted(&destination.display().to_string())
+                ))
+                .status()
+                .context("failed to run powershell Expand-Archive")?;
+            if !status.success() {
+                anyhow::bail!("powershell Expand-Archive exited with non-zero status");
+            }
+        }
+        other => anyhow::bail!("unsupported archive format {other}"),
     }
     Ok(())
 }
@@ -402,6 +571,15 @@ fn replace_binary(source: &Path, destination: &Path) -> Result<()> {
     })?;
     let temp_path = sibling_temp_path(destination);
     copy_file(source, &temp_path)?;
+    #[cfg(not(unix))]
+    if destination.exists() {
+        fs::remove_file(destination).with_context(|| {
+            format!(
+                "unable to replace existing binary {}",
+                destination.display()
+            )
+        })?;
+    }
     fs::rename(&temp_path, destination).with_context(|| {
         format!(
             "unable to replace {} with {}",
@@ -494,6 +672,10 @@ fn create_secure_temp_dir(label: &str, nonce: u128) -> Result<PathBuf> {
     anyhow::bail!("unable to allocate temporary directory for upgrade")
 }
 
+fn escape_powershell_single_quoted(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -524,7 +706,9 @@ mod tests {
     #[test]
     fn detect_release_target_supports_linux_x64() {
         assert_eq!(
-            detect_release_target_from("linux", "x86_64").expect("target"),
+            detect_release_target_from("linux", "x86_64")
+                .expect("target")
+                .slug,
             "linux-x64"
         );
     }
@@ -532,8 +716,26 @@ mod tests {
     #[test]
     fn detect_release_target_supports_macos_arm64() {
         assert_eq!(
-            detect_release_target_from("macos", "aarch64").expect("target"),
+            detect_release_target_from("macos", "aarch64")
+                .expect("target")
+                .slug,
             "darwin-arm64"
+        );
+    }
+
+    #[test]
+    fn detect_release_target_supports_windows_x64() {
+        let target = detect_release_target_from("windows", "x86_64").expect("target");
+        assert_eq!(target.slug, "windows-x64");
+        assert_eq!(target.archive_ext, "zip");
+        assert_eq!(target.binary_name, "lazycompass.exe");
+    }
+
+    #[test]
+    fn release_archive_url_supports_windows_zip_assets() {
+        assert_eq!(
+            release_archive_url("owner/repo", Some("1.2.3"), "lazycompass-windows-x64.zip"),
+            "https://github.com/owner/repo/releases/download/v1.2.3/lazycompass-windows-x64.zip"
         );
     }
 
@@ -586,12 +788,19 @@ mod tests {
                         DEFAULT_INSTALL_REPO,
                         None,
                         &format!(
-                            "{APP}-{}.tar.gz",
+                            "{APP}-{}.{}",
                             detect_release_target_from(
                                 std::env::consts::OS,
                                 std::env::consts::ARCH
                             )
                             .expect("target")
+                            .slug,
+                            detect_release_target_from(
+                                std::env::consts::OS,
+                                std::env::consts::ARCH
+                            )
+                            .expect("target")
+                            .archive_ext,
                         )
                     )
                 );
@@ -617,6 +826,7 @@ mod tests {
                 assert!(archive_url.contains("/releases/download/v1.2.3/"));
                 assert_eq!(checksum_url, format!("{archive_url}.sha256"));
                 assert_eq!(checksum_sig_url, format!("{checksum_url}.sig"));
+                assert!(archive_url.ends_with(".tar.gz") || archive_url.ends_with(".zip"));
                 assert!(no_modify_path);
             }
             UpgradePlan::Source(_) => panic!("expected release plan"),

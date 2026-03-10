@@ -9,6 +9,13 @@ pub(crate) fn resolve_editor() -> Result<String> {
                 .ok()
                 .filter(|value| !value.trim().is_empty())
         })
+        .or_else(|| {
+            if cfg!(windows) {
+                Some("notepad".to_string())
+            } else {
+                None
+            }
+        })
         .ok_or_else(|| anyhow::anyhow!("$VISUAL or $EDITOR is required for editing"))
 }
 
@@ -169,6 +176,27 @@ mod tests {
     #[test]
     fn parse_editor_command_rejects_unclosed_quotes() {
         assert!(parse_editor_command("nvim -c \"oops").is_err());
+    }
+
+    #[test]
+    fn resolve_editor_prefers_env_vars() {
+        let original_visual = std::env::var_os("VISUAL");
+        let original_editor = std::env::var_os("EDITOR");
+        unsafe {
+            std::env::set_var("VISUAL", "code --wait");
+            std::env::set_var("EDITOR", "nano");
+        }
+
+        assert_eq!(super::resolve_editor().expect("editor"), "code --wait");
+
+        match original_visual {
+            Some(value) => unsafe { std::env::set_var("VISUAL", value) },
+            None => unsafe { std::env::remove_var("VISUAL") },
+        }
+        match original_editor {
+            Some(value) => unsafe { std::env::set_var("EDITOR", value) },
+            None => unsafe { std::env::remove_var("EDITOR") },
+        }
     }
 
     #[test]

@@ -40,6 +40,7 @@ Prebuilt binaries are published on GitHub Releases for:
 - Linux x64 (glibc)
 - macOS x64
 - macOS arm64
+- Windows x64 (`beta`)
 
 Install with the repo script:
 
@@ -53,6 +54,8 @@ Or fetch it directly:
 curl -fsSL https://raw.githubusercontent.com/lucasscarioca/lazycompass/main/install.sh | bash
 ```
 
+On Windows, use a GitHub Releases zip or install from source with Cargo. The shell installer is Unix-only.
+
 Install from source with Cargo:
 
 ```bash
@@ -65,7 +68,7 @@ Upgrade an installed binary:
 lazycompass upgrade
 ```
 
-`lazycompass upgrade` downloads the matching release archive, verifies checksums, and replaces the current executable in place. Use `--from-source` to upgrade from a git checkout with Cargo instead.
+`lazycompass upgrade` downloads the matching release archive, verifies checksums, and replaces the current executable in place. Windows x64 support is currently `beta`. Use `--from-source` to upgrade from a git checkout with Cargo instead.
 
 For manual verification and signing details, see [SECURITY.md](./SECURITY.md). Signed releases use [keys/lazycompass-release-signing.asc](./keys/lazycompass-release-signing.asc).
 

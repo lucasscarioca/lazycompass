@@ -48,6 +48,29 @@ jobs:
         if: always()
         run: docker compose -f dev/mongodb/docker-compose.yml down -v
 
+  check_windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+
+      - name: Build
+        run: cargo build --workspace --target x86_64-pc-windows-msvc
+
+      - name: Test
+        run: cargo test --workspace --target x86_64-pc-windows-msvc
+
   audit:
     runs-on: ubuntu-latest
     steps:

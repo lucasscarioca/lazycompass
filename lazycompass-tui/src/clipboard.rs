@@ -53,7 +53,23 @@ fn native_commands() -> Vec<(&'static str, &'static [&'static str])> {
     vec![("pbcopy", &[])]
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn native_commands() -> Vec<(&'static str, &'static [&'static str])> {
+    vec![
+        ("clip.exe", &[]),
+        (
+            "powershell",
+            &[
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$input | Set-Clipboard",
+            ],
+        ),
+    ]
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
 fn native_commands() -> Vec<(&'static str, &'static [&'static str])> {
     vec![
         ("wl-copy", &[]),
@@ -104,7 +120,7 @@ pub(crate) fn osc52_sequence(contents: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{osc52_sequence, prefers_osc52};
+    use super::{native_commands, osc52_sequence, prefers_osc52};
 
     #[test]
     fn osc52_sequence_wraps_base64_payload() {
@@ -132,5 +148,10 @@ mod tests {
                 std::env::remove_var("SSH_TTY");
             },
         }
+    }
+
+    #[test]
+    fn native_commands_are_configured() {
+        assert!(!native_commands().is_empty());
     }
 }
