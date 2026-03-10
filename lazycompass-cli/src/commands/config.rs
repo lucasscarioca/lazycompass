@@ -280,15 +280,16 @@ fn validate_connection(connection: ConnectionSpec) -> Result<ConnectionSpec> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
 
     use lazycompass_storage::ConfigPaths;
 
-    use super::{
-        ConfigScope, collect_connection_interactively, resolve_config_scope, run_config_edit,
-    };
+    #[cfg(unix)]
+    use super::run_config_edit;
+    use super::{ConfigScope, collect_connection_interactively, resolve_config_scope};
     use crate::cli::ConfigCommands;
     use clap::{CommandFactory, Parser};
 

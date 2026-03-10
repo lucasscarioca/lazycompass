@@ -379,7 +379,7 @@ fn download_file(url: &str, destination: &Path) -> Result<()> {
         if !status.success() {
             anyhow::bail!("powershell download exited with non-zero status");
         }
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(windows))]
@@ -419,7 +419,7 @@ fn download_optional_file(url: &str, destination: &Path) -> Result<bool> {
             .stderr(Stdio::null())
             .status()
             .context("failed to execute powershell download")?;
-        return Ok(status.success());
+        Ok(status.success())
     }
 
     #[cfg(not(windows))]
@@ -634,13 +634,13 @@ fn copy_file(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn sync_directory(path: &Path) -> Result<()> {
+fn sync_directory(_path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
-        File::open(path)
-            .with_context(|| format!("unable to open directory {}", path.display()))?
+        File::open(_path)
+            .with_context(|| format!("unable to open directory {}", _path.display()))?
             .sync_all()
-            .with_context(|| format!("unable to sync directory {}", path.display()))?;
+            .with_context(|| format!("unable to sync directory {}", _path.display()))?;
     }
     Ok(())
 }

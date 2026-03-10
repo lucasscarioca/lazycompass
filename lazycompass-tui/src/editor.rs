@@ -159,8 +159,11 @@ pub(crate) fn is_editor_cancelled(contents: &str, initial: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{create_secure_editor_temp_file, parse_editor_command, write_new_temp_file};
+    #[cfg(unix)]
+    use super::write_new_temp_file;
+    use super::{create_secure_editor_temp_file, parse_editor_command};
     use std::fs;
+    #[cfg(unix)]
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
