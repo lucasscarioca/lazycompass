@@ -345,7 +345,7 @@ fn append_permission_warning_json_files(dir: &Path, warnings: &mut Vec<String>) 
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use anyhow::Result;
     use std::fs;
