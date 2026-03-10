@@ -1,15 +1,20 @@
 use anyhow::{Context, Result};
-use lazycompass_core::redact_sensitive_text;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
+use lazycompass_core::redact_sensitive_text;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
-use crate::{ConfigPaths, paths::APP_DIR, saved_common::collect_json_paths};
+#[cfg(unix)]
+use crate::saved_common::collect_json_paths;
+use crate::{ConfigPaths, paths::APP_DIR};
 
+#[cfg(unix)]
 const DIR_MODE: u32 = 0o700;
+#[cfg(unix)]
 const FILE_MODE: u32 = 0o600;
 
 #[cfg(unix)]
@@ -222,11 +227,6 @@ fn set_file_permissions(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(FILE_MODE))
         .with_context(|| format!("unable to set permissions on {}", path.display()))
-}
-
-#[cfg(not(unix))]
-fn set_file_permissions(_path: &Path) -> Result<()> {
-    Ok(())
 }
 
 #[cfg(unix)]
