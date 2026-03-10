@@ -69,7 +69,7 @@ fn run_config_edit(paths: &ConfigPaths, scope: ConfigScope) -> Result<()> {
 # name = "classic"
 
 [logging]
-# level = "info"
+# level = "warn"
 # file = "lazycompass.log"
 # max_size_mb = 10
 # max_backups = 3

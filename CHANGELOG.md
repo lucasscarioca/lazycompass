@@ -6,7 +6,13 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-03-10
+
+- Docs: restructure the README into a stronger release-facing landing page with a clearer pitch, workflow framing, and linked docs.
+- Docs: add a curated screenshot gallery for the TUI plus a CLI output example in the README.
 - UX: make `lazycompass init` and `lazycompass config add-connection` use 3 CLI prompts by default for URI, optional default database, and connection name; keep the editor template flow behind `--editor`.
+- UX: change the default CLI log level from `info` to `warn` so normal command output is quieter while file logging remains available.
+- Dev: expand the Mongo playground seed data so screenshots and demos have denser, more realistic collections.
 
 ## [0.9.6] - 2026-03-04
 

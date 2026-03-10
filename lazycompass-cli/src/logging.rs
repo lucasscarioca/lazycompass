@@ -114,7 +114,7 @@ fn rotated_log_path(path: &Path, index: u64) -> std::path::PathBuf {
 }
 
 fn parse_log_level(level: Option<&str>) -> (LevelFilter, Option<String>) {
-    let raw = level.unwrap_or("info");
+    let raw = level.unwrap_or("warn");
     let normalized = raw.trim().to_ascii_lowercase();
     let parsed = match normalized.as_str() {
         "trace" => LevelFilter::TRACE,
@@ -124,8 +124,8 @@ fn parse_log_level(level: Option<&str>) -> (LevelFilter, Option<String>) {
         "error" => LevelFilter::ERROR,
         _ => {
             return (
-                LevelFilter::INFO,
-                Some(format!("invalid log level '{raw}', using info")),
+                LevelFilter::WARN,
+                Some(format!("invalid log level '{raw}', using warn")),
             );
         }
     };
@@ -156,14 +156,15 @@ mod tests {
         assert_eq!(parse_log_level(Some("info")).0, LevelFilter::INFO);
         assert_eq!(parse_log_level(Some("warning")).0, LevelFilter::WARN);
         assert_eq!(parse_log_level(Some("error")).0, LevelFilter::ERROR);
+        assert_eq!(parse_log_level(None).0, LevelFilter::WARN);
     }
 
     #[test]
-    fn parse_log_level_falls_back_to_info_for_invalid_values() {
+    fn parse_log_level_falls_back_to_warn_for_invalid_values() {
         let (level, warning) = parse_log_level(Some("verbose"));
-        assert_eq!(level, LevelFilter::INFO);
+        assert_eq!(level, LevelFilter::WARN);
         let warning = warning.expect("warning");
-        assert!(warning.contains("invalid log level"));
+        assert!(warning.contains("using warn"));
     }
 
     #[test]

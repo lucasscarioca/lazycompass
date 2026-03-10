@@ -1,80 +1,95 @@
 # LazyCompass
 
-LazyCompass is a fast, vim-first MongoDB client for the terminal. It runs as a TUI by default, with CLI subcommands for running saved or inline queries/aggregations. Queries and aggregations can be persisted as git-committable JSON files so teams can share them per repo.
+LazyCompass is a vim-first MongoDB client for the terminal.
 
-> Disclaimer: LazyCompass is an independent open-source project and is not affiliated with or endorsed by MongoDB, Inc.
+It gives you a fast TUI for browsing data and a CLI for running saved or inline queries and aggregations. Queries and aggregations live as repo-committable JSON files, so teams can keep database workflows close to the codebase.
 
-## Pre-1.0 stability
+> LazyCompass is an independent open-source project and is not affiliated with or endorsed by MongoDB, Inc.
 
-LazyCompass is pre-1.0. Breaking changes may happen in minor releases until 1.0; see [VERSIONING.md](./VERSIONING.md) and [CHANGELOG.md](./CHANGELOG.md) for details.
+## Why LazyCompass
+
+- TUI-first workflow for browsing databases, collections, documents, and indexes
+- CLI subcommands for scripting queries, aggregations, and exports
+- Saved queries and aggregations stored in git-friendly repo files
+- Safer default runtime: MongoDB writes are opt-in per session
+- Repo-local config with optional global fallback
+- JSON, CSV, and table output for terminal, files, and clipboard
+
+## Quick Look
+
+![Main TUI](./assets/readme/lazycompass-tui-documents.png)
+
+Browse collections and scan real documents without leaving the terminal.
+
+| Inline query results | Saved queries |
+| --- | --- |
+| ![Inline query results](./assets/readme/lazycompass-tui-queryresult.png) | ![Saved queries](./assets/readme/lazycompass-tui-savedqueries.png) |
+| Run ad-hoc filters and keep the result set in context. | Reuse repo-local queries directly from the TUI. |
+
+| Document detail | Indexes |
+| --- | --- |
+| ![Document detail](./assets/readme/lazycompass-tui-document.png) | ![Indexes](./assets/readme/lazycompass-tui-indexes.png) |
+| Inspect full documents when you need field-level detail. | Check collection indexes without dropping to the shell. |
+
+Other captures and notes live in [assets/readme/README.md](./assets/readme/README.md).
 
 ## Installation
 
-Prebuilt binaries from GitHub releases:
+Prebuilt binaries are published on GitHub Releases for:
 
-- Supported release targets today: Linux x64 (glibc), macOS x64, macOS arm64.
-- Other platforms can still use `cargo install --path . -p lazycompass --locked`.
+- Linux x64 (glibc)
+- macOS x64
+- macOS arm64
+
+Install with the repo script:
 
 ```bash
 ./install.sh
 ```
 
-Install via curl:
+Or fetch it directly:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lucasscarioca/lazycompass/main/install.sh | bash
 ```
 
-Build from source or install via Cargo (requires Rust toolchain):
+Install from source with Cargo:
 
 ```bash
 cargo install --path . -p lazycompass --locked
 ```
 
-Upgrade:
+Upgrade an installed binary:
 
 ```bash
 lazycompass upgrade
 ```
 
-Upgrade downloads the matching release archive and checksum from GitHub Releases, verifies the checksum, extracts the binary, and replaces the current executable in place. `--from-source` uses `cargo install` from a Git checkout instead of release artifacts.
+`lazycompass upgrade` downloads the matching release archive, verifies checksums, and replaces the current executable in place. Use `--from-source` to upgrade from a git checkout with Cargo instead.
 
-Verification:
+For manual verification and signing details, see [SECURITY.md](./SECURITY.md). Signed releases use [keys/lazycompass-release-signing.asc](./keys/lazycompass-release-signing.asc).
 
-- The installer verifies release asset checksums when a `.sha256` file is present.
-- If a `.sha256.sig` signature is present and `gpg` is installed, the installer verifies it too.
-- See [SECURITY.md](./SECURITY.md) for vulnerability reporting and current release verification guidance.
-- Signed releases use the public key in [keys/lazycompass-release-signing.asc](./keys/lazycompass-release-signing.asc).
+## Quick Start
 
-Manual verification example (Linux x64):
-
-```bash
-curl -LO https://github.com/lucasscarioca/lazycompass/releases/latest/download/lazycompass-linux-x64.tar.gz
-curl -LO https://github.com/lucasscarioca/lazycompass/releases/latest/download/lazycompass-linux-x64.tar.gz.sha256
-curl -LO https://github.com/lucasscarioca/lazycompass/releases/latest/download/lazycompass-linux-x64.tar.gz.sha256.sig
-
-gpg --verify lazycompass-linux-x64.tar.gz.sha256.sig lazycompass-linux-x64.tar.gz.sha256
-sha256sum -c lazycompass-linux-x64.tar.gz.sha256 2>/dev/null || shasum -a 256 -c lazycompass-linux-x64.tar.gz.sha256
-```
-
-## Usage
-
-Quick start (existing repo):
-
-1. `cd` into the repo (or any subdirectory inside it).
-2. Run the setup wizard and answer 3 CLI prompts for URI, optional default database, and connection name (creates/updates `.lazycompass/config.toml` and adds a connection):
+Inside a repo:
 
 ```bash
 lazycompass init
 ```
 
-If you prefer editing a template in `$VISUAL`/`$EDITOR`, use:
+That creates or updates `.lazycompass/config.toml` and adds a connection with 3 prompts:
+
+1. MongoDB URI
+2. Optional default database
+3. Connection name
+
+If you prefer editing a template in `$VISUAL` or `$EDITOR`:
 
 ```bash
 lazycompass init --editor
 ```
 
-3. If your connection URI in config uses env interpolation (example below), set that variable:
+Example config:
 
 ```toml
 [[connections]]
@@ -83,42 +98,33 @@ uri = "${MONGO_URI}"
 default_database = "app"
 ```
 
+Set the referenced environment variable:
+
 ```bash
 export MONGO_URI='mongodb://localhost:27017/app'
 ```
 
-or put it in repo root `.env`:
+Or put it in a repo-root `.env`:
 
 ```dotenv
 MONGO_URI=mongodb://localhost:27017/app
 ```
 
-4. Start LazyCompass:
+Start the TUI:
 
 ```bash
 lazycompass
-# or for a write-enabled session
+```
+
+Start a write-enabled session:
+
+```bash
 lazycompass --dangerously-enable-write
 ```
 
-`--dangerously-enable-write` only enables MongoDB write operations. Local actions like saving queries/aggregations, editing config, exporting results, and clipboard copy remain available without it.
+`--dangerously-enable-write` only enables MongoDB write operations. Local actions like saving queries, editing config, exporting results, and clipboard copy remain available without it.
 
-Env var naming:
-
-- LazyCompass does not require a fixed URI var name. It resolves whatever you reference in config (`${VAR}`).
-- `MONGO_URI` is a convention used in docs/examples; `MONGODB_URL` or `DATABASE_URL` also work if config uses that exact name.
-- `.env` is auto-loaded from repo root for repo config and from `~/.config/lazycompass/.env` for global config.
-- Real environment variables take precedence over `.env` values.
-- Query and aggregation execution stops after 10,000 result documents; narrow the scope or add `--limit` for large result sets.
-- Insecure Mongo connections are rejected by default; use `--allow-insecure` only for explicit local/trusted exceptions.
-
-MongoDB write actions open your `$VISUAL` or `$EDITOR` for JSON editing (command + args only; no shell expansion).
-
-Documents screen keys: `i` insert, `e` edit, `d` delete, `x` export results, `y` copy results, `Q` save query, `A` save aggregation, `r` run saved query, `a` run saved aggregation. Collections screen key: `I` list indexes. Connections screen key: `n` add connection.
-
-Applied query/aggregation results can be exported from the TUI as JSON, CSV, or table text. Copy-to-clipboard uses native clipboard commands when available and falls back to OSC52. Result export/copy remains available without `--dangerously-enable-write`.
-
-For local end-to-end validation against the bundled MongoDB playground, see [dev/qa/README.md](./dev/qa/README.md).
+## Core Workflows
 
 Run a saved query or aggregation:
 
@@ -126,22 +132,21 @@ Run a saved query or aggregation:
 lazycompass query app.users.active_users
 lazycompass agg app.orders.orders_by_user --table
 lazycompass query recent_orders --db app --collection orders
-lazycompass query recent_orders --db app --collection orders -o results.json
 lazycompass query recent_orders --db app --collection orders --csv -o results.csv
-```
-
-If the selected connection has `default_database` configured, you can omit `--db`:
-
-```bash
-lazycompass query --collection users --filter '{"active": true}'
-lazycompass agg recent_orders --collection orders
 ```
 
 Run an inline query or aggregation:
 
 ```bash
-lazycompass query --db lazycompass --collection users --filter '{"active": true}'
-lazycompass agg --db lazycompass --collection orders --pipeline '[{"$group": {"_id": "$userId", "total": {"$sum": "$total"}}}]'
+lazycompass query --db app --collection users --filter '{"active": true}'
+lazycompass agg --db app --collection orders --pipeline '[{"$group":{"_id":"$userId","total":{"$sum":"$total"}}}]'
+```
+
+Use the connection default database to omit `--db`:
+
+```bash
+lazycompass query --collection users --filter '{"active": true}'
+lazycompass agg recent_orders --collection orders
 ```
 
 Pipe or save CLI output:
@@ -150,26 +155,62 @@ Pipe or save CLI output:
 lazycompass query --db app --collection users --filter '{"active": true}' | jq .
 lazycompass agg recent_orders --collection orders --table > report.txt
 lazycompass indexes --db app --collection users --table
-lazycompass query recent_orders --db app --collection orders -o results.json
-lazycompass query --collection users --filter '{"active": true}' --csv > users.csv
 ```
+
+![CLI aggregation output](./assets/readme/lazycompass-cli-aggregation.png)
+
+Use the CLI for fast saved-query runs, scripting, and terminal-friendly table output.
 
 Manage config and data:
 
 ```bash
-lazycompass init
 lazycompass config edit
 lazycompass config add-connection
 lazycompass config add-connection --editor
-lazycompass --dangerously-enable-write insert --db lazycompass --collection users --document '{"email": "a@example.com"}'
-lazycompass --dangerously-enable-write update --db lazycompass --collection users --id '{"$oid":"64e1f2b4c2a3e02c9a0a9c10"}' --document '{"email": "a@example.com", "active": true}'
-lazycompass --dangerously-enable-write insert --collection users --document '{"email": "a@example.com"}' # uses connection default_database
-lazycompass --dangerously-enable-write update --collection users --id '{"$oid":"64e1f2b4c2a3e02c9a0a9c10"}' --document '{"email": "a@example.com", "active": true}' # uses connection default_database
+lazycompass --dangerously-enable-write insert --collection users --document '{"email":"a@example.com"}'
+lazycompass --dangerously-enable-write update --collection users --id '{"$oid":"64e1f2b4c2a3e02c9a0a9c10"}' --document '{"email":"a@example.com","active":true}'
 ```
 
-## Configuration
+## TUI Highlights
 
-See [CONFIGURATION.md](./CONFIGURATION.md) and [QUERY_FORMAT.md](./QUERY_FORMAT.md) for config and saved query formats.
+- Browse connections, databases, collections, documents, and indexes
+- Run saved queries and aggregations from the TUI
+- Draft inline queries and aggregations, then rerun or save them
+- Export applied results as JSON, CSV, or table text
+- Copy results to the clipboard with native clipboard support or OSC52 fallback
+
+Useful keys:
+
+- Documents: `i` insert, `e` edit, `d` delete, `x` export, `y` copy, `Q` save query, `A` save aggregation, `r` run saved query, `a` run saved aggregation
+- Collections: `I` list indexes
+- Connections: `n` add connection
+
+## Safety Model
+
+- MongoDB write operations are disabled by default on every run
+- Use `--dangerously-enable-write` or `--yolo` to enable writes for the current session
+- Use `--allow-pipeline-writes` with write mode to allow `$out` and `$merge`
+- Insecure Mongo connections are rejected by default unless `--allow-insecure` is set
+- Query and aggregation execution stops after 10,000 result documents
+
+MongoDB write actions open `$VISUAL` or `$EDITOR` for JSON editing. Editor commands are parsed as command plus args only, without shell expansion.
+
+## Configuration and Saved Specs
+
+LazyCompass loads config from:
+
+- `~/.config/lazycompass/config.toml`
+- `.lazycompass/config.toml`
+
+Repo config overrides global config. Saved queries and aggregations live in repo files:
+
+- `.lazycompass/queries/*.json`
+- `.lazycompass/aggregations/*.json`
+
+Details:
+
+- [CONFIGURATION.md](./CONFIGURATION.md)
+- [QUERY_FORMAT.md](./QUERY_FORMAT.md)
 
 ## Docs
 
@@ -182,6 +223,10 @@ See [CONFIGURATION.md](./CONFIGURATION.md) and [QUERY_FORMAT.md](./QUERY_FORMAT.
 - [SUPPORT.md](./SUPPORT.md)
 - [CHANGELOG.md](./CHANGELOG.md)
 - [dev/qa/README.md](./dev/qa/README.md)
+
+## Pre-1.0 Stability
+
+LazyCompass is pre-`1.0`. Breaking changes may happen in minor releases until `1.0`; see [VERSIONING.md](./VERSIONING.md) and [CHANGELOG.md](./CHANGELOG.md).
 
 ## Contributing
 

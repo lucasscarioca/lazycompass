@@ -28,7 +28,7 @@ Defaults:
 - `timeouts.connect_ms`: 10000
 - `timeouts.query_ms`: 30000
 - `theme.name`: classic
-- `logging.level`: info
+- `logging.level`: warn
 - `logging.file`: `lazycompass.log` (must stay relative to the global config dir)
 - `logging.max_size_mb`: 10
 - `logging.max_backups`: 3
@@ -115,7 +115,7 @@ default_database = "app"
 name = "ember"
 
 [logging]
-level = "info"
+level = "warn"
 file = "${LAZYCOMPASS_LOG}"
 max_size_mb = 10
 max_backups = 3
