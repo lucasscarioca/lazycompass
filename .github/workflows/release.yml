@@ -236,13 +236,13 @@ jobs:
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$RELEASE_TAG" ${{ matrix.archive }} ${{ matrix.archive }}.sha256 --clobber
+        run: gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" ${{ matrix.archive }} ${{ matrix.archive }}.sha256 --clobber
 
       - name: Upload signature (optional)
         if: ${{ steps.import_gpg.outputs.fingerprint != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$RELEASE_TAG" ${{ matrix.archive }}.sha256.sig --clobber
+        run: gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" ${{ matrix.archive }}.sha256.sig --clobber
 
   publish_release:
     name: publish release

@@ -6,6 +6,10 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-03-10
+
+- Release: fix GitHub release asset uploads on Windows runners by passing the repository explicitly to `gh release upload`.
+
 ## [0.11.1] - 2026-03-10
 
 - Beta: add Windows x64 (`x86_64-pc-windows-msvc`) CI, release packaging, and `lazycompass upgrade` support.
