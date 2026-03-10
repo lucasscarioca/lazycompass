@@ -1,6 +1,6 @@
 [package]
 name = "lazycompass-storage"
-version = "0.9.6"
+version = "0.10.1"
 edition = "2024"
 license = "MIT"
 description = "Config paths and persistence for LazyCompass"

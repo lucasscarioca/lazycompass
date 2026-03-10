@@ -6,7 +6,7 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
-## [0.10.0] - 2026-03-10
+## [0.10.1] - 2026-03-10
 
 - Docs: restructure the README into a stronger release-facing landing page with a clearer pitch, workflow framing, and linked docs.
 - Docs: add a curated screenshot gallery for the TUI plus a CLI output example in the README.
