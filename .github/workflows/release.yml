@@ -234,12 +234,14 @@ jobs:
             --detach-sign ${{ matrix.archive }}.sha256
 
       - name: Upload release assets
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" ${{ matrix.archive }} ${{ matrix.archive }}.sha256 --clobber
 
       - name: Upload signature (optional)
         if: ${{ steps.import_gpg.outputs.fingerprint != '' }}
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" ${{ matrix.archive }}.sha256.sig --clobber
