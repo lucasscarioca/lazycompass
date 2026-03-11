@@ -142,6 +142,33 @@ pub fn ensure_not_symlinked_file(path: &Path) -> Result<()> {
     }
 }
 
+pub fn ensure_not_symlinked_path(path: &Path) -> Result<()> {
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        #[cfg(windows)]
+        if matches!(component, std::path::Component::Prefix(_)) {
+            continue;
+        }
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    anyhow::bail!("refusing to use symlinked path {}", current.display());
+                }
+                if current != path && !metadata.is_dir() {
+                    anyhow::bail!("path {} exists and is not a directory", current.display());
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("unable to inspect path {}", current.display()));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_target_file(path: &Path, overwrite: bool) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
@@ -354,7 +381,10 @@ mod tests {
     use anyhow::Result;
     use std::fs;
 
-    use super::{ensure_secure_dir, normalize_permissions, permission_warnings, write_secure_file};
+    use super::{
+        ensure_not_symlinked_path, ensure_secure_dir, normalize_permissions, permission_warnings,
+        write_secure_file,
+    };
     use crate::{ConfigPaths, test_support::write_file};
 
     #[cfg(unix)]
@@ -477,6 +507,25 @@ mod tests {
 
         let err = write_secure_file(&link, "after", true).expect_err("expected symlink rejection");
         assert!(err.to_string().contains("symlinked file"));
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_not_symlinked_path_rejects_symlinked_parents() -> Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let root = crate::test_support::temp_root("secure_path_parent_symlink");
+        let target = root.join("target");
+        fs::create_dir_all(&target)?;
+        let link = root.join("link");
+        symlink(&target, &link)?;
+
+        let err = ensure_not_symlinked_path(&link.join("config.toml"))
+            .expect_err("expected parent symlink rejection");
+        assert!(err.to_string().contains("symlinked path"));
 
         let _ = fs::remove_dir_all(&root);
         Ok(())

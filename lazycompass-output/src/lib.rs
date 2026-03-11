@@ -3,6 +3,7 @@ use lazycompass_core::OutputFormat;
 use lazycompass_mongo::{
     Bson, Document, render_relaxed_extjson_documents, render_relaxed_extjson_string,
 };
+use lazycompass_storage::{ensure_not_symlinked_file, ensure_not_symlinked_path};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -33,8 +34,81 @@ pub fn write_documents(
 }
 
 pub fn write_rendered_output(output_path: &Path, output: &str) -> Result<()> {
-    fs::write(output_path, output)
-        .with_context(|| format!("unable to write output file {}", output_path.display()))
+    let parent = output_path.parent().ok_or_else(|| {
+        anyhow::anyhow!(
+            "unable to resolve parent directory for {}",
+            output_path.display()
+        )
+    })?;
+    ensure_not_symlinked_path(parent)?;
+    ensure_not_symlinked_file(output_path)?;
+    write_rendered_output_atomically(output_path, output)
+}
+
+fn write_rendered_output_atomically(output_path: &Path, output: &str) -> Result<()> {
+    let parent = output_path.parent().ok_or_else(|| {
+        anyhow::anyhow!(
+            "unable to resolve parent directory for {}",
+            output_path.display()
+        )
+    })?;
+    let temp_path = sibling_temp_path(output_path);
+
+    #[cfg(unix)]
+    let mut file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&temp_path)
+            .with_context(|| format!("unable to open output file {}", temp_path.display()))?
+    };
+
+    #[cfg(not(unix))]
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temp_path)
+        .with_context(|| format!("unable to open output file {}", temp_path.display()))?;
+
+    use std::io::Write;
+    file.write_all(output.as_bytes())
+        .with_context(|| format!("unable to write output file {}", temp_path.display()))?;
+    file.sync_all()
+        .with_context(|| format!("unable to sync output file {}", temp_path.display()))?;
+    drop(file);
+
+    if output_path.exists() {
+        fs::remove_file(output_path)
+            .with_context(|| format!("unable to replace output file {}", output_path.display()))?;
+    }
+    fs::rename(&temp_path, output_path)
+        .with_context(|| format!("unable to write output file {}", output_path.display()))?;
+
+    #[cfg(unix)]
+    {
+        use std::fs::File;
+        File::open(parent)
+            .with_context(|| format!("unable to open directory {}", parent.display()))?
+            .sync_all()
+            .with_context(|| format!("unable to sync directory {}", parent.display()))?;
+    }
+
+    Ok(())
+}
+
+fn sibling_temp_path(path: &Path) -> std::path::PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("lazycompass-output.tmp");
+    let pid = std::process::id();
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    path.with_file_name(format!(".{file_name}.{pid}.{nonce}.tmp"))
 }
 
 pub fn suggested_export_filename(
@@ -256,6 +330,8 @@ mod tests {
     use lazycompass_core::OutputFormat;
     use lazycompass_mongo::{Bson, Document, parse_json_document};
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
 
     fn temp_path(name: &str) -> std::path::PathBuf {
         let nonce = std::time::SystemTime::now()
@@ -460,5 +536,29 @@ mod tests {
         assert_eq!(contents, "a,b\n1,2");
 
         let _ = fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_rendered_output_rejects_symlinked_targets() {
+        let dir = std::env::temp_dir().join(format!(
+            "lazycompass_output_symlink_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).expect("create dir");
+        let target = dir.join("target.txt");
+        fs::write(&target, "before").expect("write target");
+        let link = dir.join("export.txt");
+        symlink(&target, &link).expect("create symlink");
+
+        let err = write_rendered_output(&link, "after").expect_err("expected symlink rejection");
+        assert!(err.to_string().contains("symlinked file"));
+        assert_eq!(fs::read_to_string(&target).expect("read target"), "before");
+
+        let _ = fs::remove_dir_all(dir);
     }
 }

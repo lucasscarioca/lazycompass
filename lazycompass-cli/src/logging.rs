@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use lazycompass_core::{Config, LoggingConfig};
-use lazycompass_storage::{ConfigPaths, log_file_path};
+use lazycompass_storage::{
+    ConfigPaths, ensure_not_symlinked_file, ensure_secure_dir, log_file_path,
+};
 use std::fs;
 use std::path::Path;
 use tracing_subscriber::filter::{LevelFilter, Targets};
@@ -21,9 +23,10 @@ pub(crate) fn init_logging(paths: &ConfigPaths, config: &Config) -> Result<()> {
         .with_default(LevelFilter::WARN);
     let log_path = log_file_path(paths, config);
     if let Some(parent) = log_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("unable to create log directory {}", parent.display()))?;
+        ensure_secure_dir(parent)
+            .with_context(|| format!("unable to prepare log directory {}", parent.display()))?;
     }
+    ensure_not_symlinked_file(&log_path)?;
     rotate_logs_if_needed(&log_path, &config.logging)?;
     let _ = fs::OpenOptions::new()
         .create(true)
@@ -134,8 +137,12 @@ fn parse_log_level(level: Option<&str>) -> (LevelFilter, Option<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_log_level, rotate_log_files, rotated_log_path};
+    use super::{init_logging, parse_log_level, rotate_log_files, rotated_log_path};
+    use lazycompass_core::Config;
+    use lazycompass_storage::ConfigPaths;
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
     use std::path::PathBuf;
     use tracing_subscriber::filter::LevelFilter;
 
@@ -195,6 +202,27 @@ mod tests {
             fs::read_to_string(log.with_file_name("lazycompass.log.2")).expect("read .2"),
             "backup1"
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn init_logging_rejects_symlinked_log_file() {
+        let dir = temp_dir("symlinked_log");
+        let target = dir.join("target.log");
+        fs::write(&target, "existing").expect("write target");
+        let root = dir.join("global");
+        fs::create_dir_all(&root).expect("create global root");
+        symlink(&target, root.join("lazycompass.log")).expect("create symlink");
+
+        let paths = ConfigPaths {
+            global_root: root,
+            repo_root: None,
+        };
+        let err =
+            init_logging(&paths, &Config::default()).expect_err("expected symlinked log rejection");
+        assert!(err.to_string().contains("symlinked file"));
 
         let _ = fs::remove_dir_all(&dir);
     }

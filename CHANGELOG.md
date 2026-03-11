@@ -6,6 +6,8 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+- Security: reject symlinked config roots on read, not just on write, so repo/global config loading cannot escape via `.lazycompass` or config-dir symlinks.
+- Security: harden export and logging writes against symlink traversal by replacing raw output writes with checked paths.
 - Security: pin automated release signature verification to the bundled LazyCompass signing key in both `install.sh` and `lazycompass upgrade`.
 - Security: make the Unix installer fail closed when checksum verification tools are unavailable.
 - Beta: block Windows self-upgrade with a clear manual-install fallback until the Windows release path is promoted beyond beta.

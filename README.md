@@ -69,7 +69,7 @@ Upgrade an installed binary:
 lazycompass upgrade
 ```
 
-`lazycompass upgrade` downloads the matching release archive, verifies checksums, and verifies the bundled release signing key when signatures are present. Windows x64 support is currently `beta`; use a GitHub Releases zip or `--from-source` there instead of self-upgrade.
+`lazycompass upgrade` downloads the matching release archive and verifies checksums. If `gpg` is installed and the release ships a signature, it also verifies the checksum signature against the bundled LazyCompass release key. Windows x64 support is currently `beta`; use a GitHub Releases zip or `--from-source` there instead of self-upgrade.
 
 For manual verification and signing details, see [SECURITY.md](./SECURITY.md). Signed releases use [keys/lazycompass-release-signing.asc](./keys/lazycompass-release-signing.asc).
 

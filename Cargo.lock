@@ -1183,6 +1183,7 @@ dependencies = [
  "anyhow",
  "lazycompass-core",
  "lazycompass-mongo",
+ "lazycompass-storage",
  "serde_json",
 ]
 

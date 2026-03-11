@@ -5,14 +5,18 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use toml::Value;
 
-use crate::ConfigPaths;
+use crate::{ConfigPaths, ensure_not_symlinked_path};
 
 pub fn load_config(paths: &ConfigPaths) -> Result<Config> {
+    ensure_not_symlinked_path(&paths.global_root)?;
     let global_path = paths.global_config_path();
     let global_env = load_dotenv_values_for_config(&global_path)?;
     let global = read_config(&global_path, &global_env)?;
     let repo = match paths.repo_config_path() {
         Some(path) => {
+            if let Some(repo_root) = paths.repo_config_root() {
+                ensure_not_symlinked_path(&repo_root)?;
+            }
             let repo_env = load_dotenv_values_for_config(&path)?;
             read_config(&path, &repo_env)?
         }
@@ -294,6 +298,8 @@ mod tests {
     use lazycompass_core::{Config, LoggingConfig, ThemeConfig, TimeoutConfig};
     use std::collections::HashMap;
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
 
     use super::{load_config, log_file_path};
     use crate::{
@@ -827,5 +833,42 @@ file = "../outside.log"
 
         let _ = fs::remove_dir_all(&root);
         Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_config_rejects_symlinked_repo_config_root() {
+        let root = temp_root("config_repo_root_symlink");
+        let repo_root = root.join("repo");
+        let target_root = root.join("target");
+        fs::create_dir_all(repo_root.join(".git")).expect("create .git");
+        fs::create_dir_all(&target_root).expect("create target");
+        symlink(&target_root, repo_root.join(".lazycompass")).expect("create symlink");
+
+        let paths = ConfigPaths {
+            global_root: root.join("global"),
+            repo_root: Some(repo_root),
+        };
+
+        let err = load_config(&paths).expect_err("expected symlinked repo config root rejection");
+        assert!(err.to_string().contains("symlinked path"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_config_rejects_symlinked_global_root() {
+        let root = temp_root("config_global_root_symlink");
+        let target_root = root.join("target");
+        fs::create_dir_all(&target_root).expect("create target");
+        let global_root = root.join("global");
+        symlink(&target_root, &global_root).expect("create symlink");
+
+        let paths = ConfigPaths {
+            global_root,
+            repo_root: None,
+        };
+
+        let err = load_config(&paths).expect_err("expected symlinked global root rejection");
+        assert!(err.to_string().contains("symlinked path"));
     }
 }

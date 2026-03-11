@@ -14,7 +14,9 @@ pub use saved_aggregations::{
     load_saved_aggregations, saved_aggregation_path, write_saved_aggregation,
 };
 pub use saved_queries::{load_saved_queries, saved_query_path, write_saved_query};
-pub use security::{ensure_not_symlinked_file, ensure_secure_dir, write_secure_file};
+pub use security::{
+    ensure_not_symlinked_file, ensure_not_symlinked_path, ensure_secure_dir, write_secure_file,
+};
 pub use snapshot::{StorageSnapshot, load_storage, load_storage_with_config};
 
 #[cfg(test)]
