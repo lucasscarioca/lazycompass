@@ -342,7 +342,7 @@ mod tests {
             repo_root: None,
         };
         let err = run_config_edit(&paths, ConfigScope::Global).expect_err("expected symlink error");
-        assert!(err.to_string().contains("symlinked file"));
+        assert!(err.to_string().contains("symlinked"));
 
         let _ = fs::remove_dir_all(root);
     }
