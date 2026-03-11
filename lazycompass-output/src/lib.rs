@@ -46,12 +46,6 @@ pub fn write_rendered_output(output_path: &Path, output: &str) -> Result<()> {
 }
 
 fn write_rendered_output_atomically(output_path: &Path, output: &str) -> Result<()> {
-    let output_dir = output_path.parent().ok_or_else(|| {
-        anyhow::anyhow!(
-            "unable to resolve parent directory for {}",
-            output_path.display()
-        )
-    })?;
     let temp_path = sibling_temp_path(output_path);
 
     #[cfg(unix)]
@@ -89,6 +83,12 @@ fn write_rendered_output_atomically(output_path: &Path, output: &str) -> Result<
     #[cfg(unix)]
     {
         use std::fs::File;
+        let output_dir = output_path.parent().ok_or_else(|| {
+            anyhow::anyhow!(
+                "unable to resolve parent directory for {}",
+                output_path.display()
+            )
+        })?;
         File::open(output_dir)
             .with_context(|| format!("unable to open directory {}", output_dir.display()))?
             .sync_all()

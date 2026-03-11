@@ -1131,8 +1131,14 @@ mod tests {
     use lazycompass_core::{Config, ConnectionSpec, SavedAggregation, SavedQuery, SavedScope};
     use lazycompass_storage::StorageSnapshot;
     use std::fs;
+    use std::path::PathBuf;
 
     use super::*;
+
+    fn canonical_temp_dir() -> PathBuf {
+        let temp_dir = std::env::temp_dir();
+        fs::canonicalize(&temp_dir).unwrap_or(temp_dir)
+    }
 
     fn storage_with_context() -> StorageSnapshot {
         StorageSnapshot {
@@ -1461,7 +1467,7 @@ mod tests {
     #[test]
     fn submit_export_path_writes_file() {
         let mut app = app_with_document_context();
-        let path = std::env::temp_dir().join(format!(
+        let path = canonical_temp_dir().join(format!(
             "lazycompass_export_test_{}_{}.json",
             std::process::id(),
             std::time::SystemTime::now()
@@ -1488,7 +1494,7 @@ mod tests {
     #[test]
     fn submit_export_path_requests_overwrite_when_file_exists() {
         let mut app = app_with_document_context();
-        let path = std::env::temp_dir().join(format!(
+        let path = canonical_temp_dir().join(format!(
             "lazycompass_export_overwrite_{}_{}.json",
             std::process::id(),
             std::time::SystemTime::now()
