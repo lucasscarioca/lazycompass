@@ -46,7 +46,7 @@ pub fn write_rendered_output(output_path: &Path, output: &str) -> Result<()> {
 }
 
 fn write_rendered_output_atomically(output_path: &Path, output: &str) -> Result<()> {
-    let parent = output_path.parent().ok_or_else(|| {
+    let output_dir = output_path.parent().ok_or_else(|| {
         anyhow::anyhow!(
             "unable to resolve parent directory for {}",
             output_path.display()
@@ -89,10 +89,10 @@ fn write_rendered_output_atomically(output_path: &Path, output: &str) -> Result<
     #[cfg(unix)]
     {
         use std::fs::File;
-        File::open(parent)
-            .with_context(|| format!("unable to open directory {}", parent.display()))?
+        File::open(output_dir)
+            .with_context(|| format!("unable to open directory {}", output_dir.display()))?
             .sync_all()
-            .with_context(|| format!("unable to sync directory {}", parent.display()))?;
+            .with_context(|| format!("unable to sync directory {}", output_dir.display()))?;
     }
 
     Ok(())
@@ -332,13 +332,19 @@ mod tests {
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
+    use std::path::PathBuf;
 
-    fn temp_path(name: &str) -> std::path::PathBuf {
+    fn canonical_temp_dir() -> PathBuf {
+        let temp_dir = std::env::temp_dir();
+        fs::canonicalize(&temp_dir).unwrap_or(temp_dir)
+    }
+
+    fn temp_path(name: &str) -> PathBuf {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        std::env::temp_dir().join(format!("lazycompass_output_{name}_{nonce}.txt"))
+        canonical_temp_dir().join(format!("lazycompass_output_{name}_{nonce}.txt"))
     }
 
     fn document(entries: Vec<(&str, Bson)>) -> Document {
@@ -541,7 +547,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn write_rendered_output_rejects_symlinked_targets() {
-        let dir = std::env::temp_dir().join(format!(
+        let dir = canonical_temp_dir().join(format!(
             "lazycompass_output_symlink_{}_{}",
             std::process::id(),
             std::time::SystemTime::now()

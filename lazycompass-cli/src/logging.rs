@@ -146,12 +146,17 @@ mod tests {
     use std::path::PathBuf;
     use tracing_subscriber::filter::LevelFilter;
 
+    fn canonical_temp_dir() -> PathBuf {
+        let temp_dir = std::env::temp_dir();
+        fs::canonicalize(&temp_dir).unwrap_or(temp_dir)
+    }
+
     fn temp_dir(prefix: &str) -> PathBuf {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("lazycompass_logging_{prefix}_{nonce}"));
+        let path = canonical_temp_dir().join(format!("lazycompass_logging_{prefix}_{nonce}"));
         fs::create_dir_all(&path).expect("create temp dir");
         path
     }

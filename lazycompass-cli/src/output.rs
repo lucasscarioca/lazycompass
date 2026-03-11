@@ -28,13 +28,19 @@ mod tests {
     use lazycompass_core::OutputFormat;
     use lazycompass_mongo::Document;
     use std::fs;
+    use std::path::PathBuf;
 
-    fn temp_path(name: &str) -> std::path::PathBuf {
+    fn canonical_temp_dir() -> PathBuf {
+        let temp_dir = std::env::temp_dir();
+        fs::canonicalize(&temp_dir).unwrap_or(temp_dir)
+    }
+
+    fn temp_path(name: &str) -> PathBuf {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        std::env::temp_dir().join(format!("lazycompass_output_{name}_{nonce}.txt"))
+        canonical_temp_dir().join(format!("lazycompass_output_{name}_{nonce}.txt"))
     }
 
     #[test]
