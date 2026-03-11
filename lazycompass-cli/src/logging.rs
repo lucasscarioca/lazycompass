@@ -137,8 +137,12 @@ fn parse_log_level(level: Option<&str>) -> (LevelFilter, Option<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{init_logging, parse_log_level, rotate_log_files, rotated_log_path};
+    #[cfg(unix)]
+    use super::init_logging;
+    use super::{parse_log_level, rotate_log_files, rotated_log_path};
+    #[cfg(unix)]
     use lazycompass_core::Config;
+    #[cfg(unix)]
     use lazycompass_storage::ConfigPaths;
     use std::fs;
     #[cfg(unix)]
