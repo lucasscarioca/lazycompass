@@ -38,7 +38,7 @@ pub fn load_storage_with_config(paths: &ConfigPaths, config: Config) -> Result<S
 #[cfg(test)]
 mod tests {
     use super::load_storage_with_config;
-    use crate::ConfigPaths;
+    use crate::{ConfigPaths, test_support::canonical_temp_dir};
     use lazycompass_core::{Config, ConnectionSpec};
     use std::fs;
     #[cfg(unix)]
@@ -50,7 +50,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("lazycompass_snapshot_{prefix}_{nonce}"));
+        let path = canonical_temp_dir().join(format!("lazycompass_snapshot_{prefix}_{nonce}"));
         fs::create_dir_all(&path).expect("create temp dir");
         path
     }

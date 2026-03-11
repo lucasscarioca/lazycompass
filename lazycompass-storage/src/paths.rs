@@ -81,6 +81,7 @@ fn is_real_dir(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::find_repo_root;
+    use crate::test_support::canonical_temp_dir;
     use std::fs;
     use std::path::PathBuf;
 
@@ -89,7 +90,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("lazycompass_paths_{prefix}_{nonce}"));
+        let path = canonical_temp_dir().join(format!("lazycompass_paths_{prefix}_{nonce}"));
         fs::create_dir_all(&path).expect("create temp dir");
         path
     }

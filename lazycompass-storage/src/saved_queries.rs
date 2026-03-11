@@ -165,7 +165,7 @@ mod tests {
     use super::{load_saved_queries, write_saved_query};
     use crate::{
         ConfigPaths,
-        test_support::{temp_root, write_file},
+        test_support::{canonical_temp_dir, temp_root, write_file},
     };
 
     #[test]
@@ -331,7 +331,7 @@ mod tests {
             limit: None,
         };
         let paths = ConfigPaths {
-            global_root: std::env::temp_dir(),
+            global_root: canonical_temp_dir(),
             repo_root: None,
         };
 

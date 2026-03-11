@@ -1,8 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub(crate) fn canonical_temp_dir() -> PathBuf {
+    let temp_dir = std::env::temp_dir();
+    fs::canonicalize(&temp_dir).unwrap_or(temp_dir)
+}
+
 pub(crate) fn temp_root(prefix: &str) -> PathBuf {
-    let mut dir = std::env::temp_dir();
+    let mut dir = canonical_temp_dir();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()

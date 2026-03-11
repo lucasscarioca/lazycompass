@@ -123,7 +123,7 @@ mod tests {
         append_connection_to_global_config, append_connection_to_repo_config,
         read_config_for_update,
     };
-    use crate::ConfigPaths;
+    use crate::{ConfigPaths, test_support::canonical_temp_dir};
     use lazycompass_core::ConnectionSpec;
     use std::fs;
     use std::future::Future;
@@ -136,7 +136,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("lazycompass_connections_{prefix}_{nonce}"));
+        let path = canonical_temp_dir().join(format!("lazycompass_connections_{prefix}_{nonce}"));
         fs::create_dir_all(&path).expect("create temp dir");
         path
     }
