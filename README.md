@@ -55,6 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/lucasscarioca/lazycompass/main/inst
 ```
 
 On Windows, use a GitHub Releases zip or install from source with Cargo. The shell installer is Unix-only.
+The Unix installer requires `curl`, `tar`, and either `sha256sum` or `shasum`. If `gpg` is installed and the release ships a signature, the installer verifies it against the bundled LazyCompass release key.
 
 Install from source with Cargo:
 
@@ -68,7 +69,7 @@ Upgrade an installed binary:
 lazycompass upgrade
 ```
 
-`lazycompass upgrade` downloads the matching release archive, verifies checksums, and replaces the current executable in place. Windows x64 support is currently `beta`. Use `--from-source` to upgrade from a git checkout with Cargo instead.
+`lazycompass upgrade` downloads the matching release archive, verifies checksums, and verifies the bundled release signing key when signatures are present. Windows x64 support is currently `beta`; use a GitHub Releases zip or `--from-source` there instead of self-upgrade.
 
 For manual verification and signing details, see [SECURITY.md](./SECURITY.md). Signed releases use [keys/lazycompass-release-signing.asc](./keys/lazycompass-release-signing.asc).
 
@@ -233,9 +234,9 @@ Details:
 - [CHANGELOG.md](./CHANGELOG.md)
 - [dev/qa/README.md](./dev/qa/README.md)
 
-## Pre-1.0 Stability
+## Stability
 
-LazyCompass is pre-`1.0`. Breaking changes may happen in minor releases until `1.0`; see [VERSIONING.md](./VERSIONING.md) and [CHANGELOG.md](./CHANGELOG.md).
+Current tagged releases are still pre-`1.0`. The target `1.x` contract is stable on Linux and macOS, while Windows remains `beta`; see [VERSIONING.md](./VERSIONING.md) and [CHANGELOG.md](./CHANGELOG.md).
 
 ## Contributing
 

@@ -3,6 +3,7 @@ set -euo pipefail
 umask 077
 
 APP="lazycompass"
+EXPECTED_SIGNING_FINGERPRINT="5D7EF1CB7FD9672A6D113B5C74502B609A660BAA"
 
 MUTED='\033[0;2m'
 RED='\033[0;31m'
@@ -167,29 +168,23 @@ install_from_source() {
 detect_target() {
   local raw_os
   raw_os=$(uname -s)
-  local os
-  case "$raw_os" in
-    Darwin*) os="darwin" ;;
-    Linux*) os="linux" ;;
-    *)
-      echo -e "${RED}Unsupported OS: $raw_os${NC}" >&2
-      exit 1
-      ;;
-  esac
-
   local arch
   arch=$(uname -m)
-  case "$arch" in
-    aarch64) arch="arm64" ;;
-    arm64) arch="arm64" ;;
-    x86_64) arch="x64" ;;
+  case "$raw_os/$arch" in
+    Darwin*/x86_64) echo "darwin-x64" ;;
+    Darwin*/aarch64|Darwin*/arm64) echo "darwin-arm64" ;;
+    Linux*/x86_64) echo "linux-x64" ;;
+    Linux*/*)
+      echo -e "${RED}Unsupported Linux architecture for release installs: $arch${NC}" >&2
+      echo -e "Use --from-source or a manual build instead." >&2
+      exit 1
+      ;;
     *)
-      echo -e "${RED}Unsupported architecture: $arch${NC}" >&2
+      echo -e "${RED}Unsupported platform for release installs: $raw_os/$arch${NC}" >&2
+      echo -e "Use --from-source or a manual build instead." >&2
       exit 1
       ;;
   esac
-
-  echo "$os-$arch"
 }
 
 sha256_command() {
@@ -209,8 +204,8 @@ verify_checksum() {
   local asset_file=$2
   local tool
   if ! tool=$(sha256_command); then
-    print_message warning "SHA256 tool not found; skipping checksum verification."
-    return 0
+    echo -e "${RED}Error: sha256sum or shasum is required to verify release assets${NC}" >&2
+    exit 1
   fi
 
   local expected
@@ -232,15 +227,73 @@ verify_checksum() {
   print_message info "${MUTED}Checksum verified.${NC}"
 }
 
+normalize_fingerprint() {
+  printf '%s' "$1" | tr -cd '[:alnum:]' | tr '[:lower:]' '[:upper:]'
+}
+
+write_release_signing_key() {
+  local path=$1
+  cat > "$path" <<'EOF'
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mQINBGmnYrkBEADLxOTiK6xcu+6Xe0wwj+flKIjF+55HwHRmFbq4JgFfcRCKG0Ut
+ANV/fUcs/ZjKmz9qmbGY0diCruKLazP78vctFbpOwmJkQIm+t6rS1VwZ4QEeyu7i
+88DXSQUSpt0s5eWFI+mFP2rnC8lNcokmgKDOJu7nntEjkNGyL/5LZmS/cUGP2kCw
+JEZgY0FLIK2vlTWaPU2CjUdYjk+9RHwbgZc3vm6k7sgZ4I3b5qPZsbDuTvHWPeaL
++ihX44AKvrWCrq+pf11qQKr77uRsM83627i/fbAY2hicKcLzQSjORSiNhw3jOma0
+PC1l0obUm2LX2JrXbSVIn3oFORf2dpgWBe0hCWOXcK3lyYHAzQWaPxfcM3d4M1bR
+4E9nZJp157wFy3EN2ixWiXx9sMxfLotDSu3NOFmlVEKL3ikQ38XjsP02I3N34W2n
+h1vJlVGdR1OnY9ppCAaX9O/wVtAW9bOHnDGKmG2O6SCf84csoc1kJ7VSCyOyPnkp
+yoLakVFZj/KQscoZXenYVUb8hxwSHsYwa8ToP5uqw47AcmwYcFTauC4QbygSOnsr
+O0qbVa9wq4sRj4DjEaq36ngDqgwNTOHI01IvDhCpLNJdvo8pOII0uwgbus3+Mgw0
+ca0T/6Ft30risciFNENJ3mYEiJnMZu0YQa25lot0YizjwyZ35A5MCAjXGQARAQAB
+tERMYXp5Q29tcGFzcyBSZWxlYXNlIFNpZ25pbmcgPGx1Y2Fzc2NhcmlvY2FAdXNl
+cnMubm9yZXBseS5naXRodWIuY29tPokCUQQTAQoAOxYhBF1+8ct/2WcqbRE7XHRQ
+K2CaZguqBQJpp2K5AhsDBQsJCAcCAiICBhUKCQgLAgQWAgMBAh4HAheAAAoJEHRQ
+K2CaZguqRbkP/2jf1Pga4YgtKGazhCpAMuc8Oqd6mvvk//KXlzZS6SoyhwX+di7g
+m74bMYABXjlofuuLG5T9WULob/YLBtJeZIewn1XoqtZ1pvOlUBi6LLWJPKv3/kKb
+MNoxVdNq+Pos62HgFBqHKANmizY5vM3MfiAoSpM9uePA3zB1dk+oxzEgkrwrWWoe
+ZdeFv2X0MUOizvvGhCQxbOAPCHs+IHv4/vhNxXbLcBGd+9NNtTAbBLU7BzyRjLQP
+GmpeNOFW5xsFUYRncr6u6cy6Ujroh3VyB/ERFKEmW4LZm0Skj/V5aaimhVcFHb5M
+QWQU83U5zg/6vJ1Zi4cxYbFCjyBL404JGzN9LK8dD+wmCdn/r8b2zjNrLB57m6vt
++ULc69/aWgplnplZY2a+xPXLBmKY+wK/Zn6uXtMecRl+aqKFfymazVmXuhcwzgGy
+ZBqGucbc06SD6iYaZKash4VmXs5nhQxH3OJyFy9yURRljAoze/T0+fRJo1PcEujF
+th4boXf1JIGmusOIg3vWN7tu/XiJkoXyy9JAbCeyJFAvyb1kpNuTqjb3FowOZVXi
+BLOF+ND5Tbkd1/ojlt6QKSmoS9W9SVoQqO18L6f35xfjt3QK1Oki4sh6+qHagiNR
+geTCCfAFc5tyKbK3sObOUQe9QG7rYx3BlVUdMVuAn1TIjb3B4XuJnPe5
+=RDBb
+-----END PGP PUBLIC KEY BLOCK-----
+EOF
+}
+
 verify_signature() {
   local checksum_file=$1
   local sig_file=$2
+  local temp_dir=$3
   if ! command -v gpg >/dev/null 2>&1; then
     print_message warning "gpg not found; skipping signature verification."
     return 0
   fi
 
-  if ! gpg --verify "$sig_file" "$checksum_file" >/dev/null 2>&1; then
+  local gpg_home="$temp_dir/gpg-home"
+  local key_file="$temp_dir/lazycompass-release-signing.asc"
+  mkdir -p "$gpg_home"
+  chmod 700 "$gpg_home"
+  write_release_signing_key "$key_file"
+
+  local fingerprint
+  fingerprint=$(gpg --batch --show-keys --with-colons "$key_file" | awk -F: '$1=="fpr"{print $10; exit}')
+  if [[ "$(normalize_fingerprint "$fingerprint")" != "$EXPECTED_SIGNING_FINGERPRINT" ]]; then
+    echo -e "${RED}Error: bundled release signing key fingerprint does not match expected fingerprint${NC}" >&2
+    exit 1
+  fi
+
+  if ! gpg --homedir "$gpg_home" --batch --import "$key_file" >/dev/null 2>&1; then
+    echo -e "${RED}Error: failed to import bundled release signing key${NC}" >&2
+    exit 1
+  fi
+
+  if ! gpg --homedir "$gpg_home" --batch --verify "$sig_file" "$checksum_file" >/dev/null 2>&1; then
     echo -e "${RED}Error: checksum signature verification failed${NC}" >&2
     exit 1
   fi
@@ -298,7 +351,7 @@ download_and_install() {
   verify_checksum "$checksum_file" "$tmp_dir/$asset"
   if curl -fsL -o "$checksum_sig_file" "$checksum_sig_url"; then
     print_message info "${MUTED}Verifying checksum signature...${NC}"
-    verify_signature "$checksum_file" "$checksum_sig_file"
+    verify_signature "$checksum_file" "$checksum_sig_file" "$tmp_dir"
   else
     print_message warning "Checksum signature unavailable; skipping signature verification."
   fi

@@ -17,6 +17,7 @@
 - Signed releases use the public key in [keys/lazycompass-release-signing.asc](./keys/lazycompass-release-signing.asc).
 - Current release signing fingerprint: `5D7E F1CB 7FD9 672A 6D11 3B5C 7450 2B60 9A66 0BAA`
 - `0.9.0` predates signing setup and does not ship `.sha256.sig` assets.
+- Automated install/upgrade flows verify signatures against the bundled LazyCompass release key in an isolated GPG home. They do not trust unrelated keys from the user's default keyring.
 - If a release ships both `.sha256` and `.sha256.sig`, verify the signature first, then verify the checksum against the archive.
 
 ## Security review expectations

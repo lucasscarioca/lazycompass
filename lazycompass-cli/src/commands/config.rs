@@ -153,28 +153,30 @@ fn collect_connection_via_editor() -> Result<ConnectionSpec> {
 name = "my-connection"
 uri = "${MONGO_URI}"
 default_database = "mydb"
-"#;
+    "#;
 
     let temp_path = create_secure_temp_file("connection", "toml", template)?;
+    let result = (|| {
+        open_in_editor(&temp_path)?;
 
-    open_in_editor(&temp_path)?;
+        let edited_content = fs::read_to_string(&temp_path)
+            .with_context(|| format!("unable to read edited file {}", temp_path.display()))?;
 
-    let edited_content = fs::read_to_string(&temp_path)
-        .with_context(|| format!("unable to read edited file {}", temp_path.display()))?;
+        let toml_content: String = edited_content
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let connection: ConnectionSpec = toml::from_str(&toml_content).with_context(
+            || "invalid TOML in connection definition; expected fields: name, uri, default_database",
+        )?;
+
+        validate_connection(connection)
+    })();
 
     let _ = fs::remove_file(&temp_path);
-
-    let toml_content: String = edited_content
-        .lines()
-        .filter(|line| !line.trim_start().starts_with('#'))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let connection: ConnectionSpec = toml::from_str(&toml_content).with_context(
-        || "invalid TOML in connection definition; expected fields: name, uri, default_database",
-    )?;
-
-    validate_connection(connection)
+    result
 }
 
 fn collect_connection_interactively<R: BufRead, W: Write>(

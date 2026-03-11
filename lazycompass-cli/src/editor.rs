@@ -62,14 +62,17 @@ pub(crate) fn read_document_input(
     }
 
     let temp_path = create_secure_temp_file(label, "json", "{}")?;
-    open_in_editor(&temp_path)?;
-    let contents = fs::read_to_string(&temp_path)
-        .with_context(|| format!("unable to read temp file {}", temp_path.display()))?;
+    let result = (|| {
+        open_in_editor(&temp_path)?;
+        let contents = fs::read_to_string(&temp_path)
+            .with_context(|| format!("unable to read temp file {}", temp_path.display()))?;
+        if contents.trim().is_empty() {
+            anyhow::bail!("document cannot be empty");
+        }
+        Ok(contents)
+    })();
     let _ = fs::remove_file(&temp_path);
-    if contents.trim().is_empty() {
-        anyhow::bail!("document cannot be empty");
-    }
-    Ok(contents)
+    result
 }
 
 pub(crate) fn parse_json_value(label: &str, value: &str) -> Result<Bson> {

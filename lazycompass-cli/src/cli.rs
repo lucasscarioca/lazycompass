@@ -292,7 +292,7 @@ pub(crate) struct AddConnectionArgs {
 #[derive(Args)]
 #[command(
     about = "Upgrade LazyCompass from release assets or source",
-    long_about = "Download the matching GitHub release archive, verify its checksum, and replace the current binary in place. Use --version to pin a release, --repo to switch repositories, or --from-source to run cargo install from a Git checkout instead."
+    long_about = "Download the matching GitHub release archive, verify its checksum and bundled signing key when available, and replace the current binary in place. Use --version to pin a release, --repo to switch repositories, or --from-source to run cargo install from a Git checkout instead. Windows release self-upgrade remains beta-only and currently requires a manual zip install or --from-source."
 )]
 pub(crate) struct UpgradeArgs {
     #[arg(long, help = "Install a specific release version")]

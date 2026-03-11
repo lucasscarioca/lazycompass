@@ -6,6 +6,13 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+- Security: pin automated release signature verification to the bundled LazyCompass signing key in both `install.sh` and `lazycompass upgrade`.
+- Security: make the Unix installer fail closed when checksum verification tools are unavailable.
+- Beta: block Windows self-upgrade with a clear manual-install fallback until the Windows release path is promoted beyond beta.
+- CI: add macOS validation to normal CI and require macOS/Windows build+test coverage in the tagged release workflow.
+- CLI: clean up editor temp files on failure paths for config-add and document-edit flows.
+- Docs: document the installer tool requirements, pinned signing-key verification model, and planned `1.x` stability contract.
+
 ## [0.11.2] - 2026-03-10
 
 - Release: fix GitHub release asset uploads on Windows runners by passing the repository explicitly to `gh release upload`.

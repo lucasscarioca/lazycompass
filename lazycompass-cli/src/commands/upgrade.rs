@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::env;
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -11,6 +11,8 @@ use crate::cli::UpgradeArgs;
 
 const APP: &str = "lazycompass";
 const DEFAULT_INSTALL_REPO: &str = "lucasscarioca/lazycompass";
+const RELEASE_SIGNING_KEY: &str = include_str!("../../../keys/lazycompass-release-signing.asc");
+const RELEASE_SIGNING_FINGERPRINT: &str = "5D7EF1CB7FD9672A6D113B5C74502B609A660BAA";
 
 pub(crate) fn run_upgrade(args: UpgradeArgs) -> Result<()> {
     let plan = plan_upgrade(args, UpgradeContext::from_env())?;
@@ -21,6 +23,7 @@ pub(crate) fn run_upgrade(args: UpgradeArgs) -> Result<()> {
 
     match &plan {
         UpgradePlan::Release(plan) => {
+            ensure_release_upgrade_supported(plan)?;
             eprintln!(
                 "Downloading verified release asset from {}",
                 plan.archive_url
@@ -211,6 +214,15 @@ fn validate_repo(repo: &str) -> Result<()> {
     Ok(())
 }
 
+fn ensure_release_upgrade_supported(plan: &ReleaseUpgradePlan) -> Result<()> {
+    if plan.target.slug == "windows-x64" {
+        anyhow::bail!(
+            "Windows release self-upgrade is not supported in the current beta build; download a new GitHub Releases zip or rerun with --from-source"
+        );
+    }
+    Ok(())
+}
+
 fn infer_install_root(install_path: &Path) -> Result<PathBuf> {
     let bin_dir = install_path.parent().ok_or_else(|| {
         anyhow::anyhow!(
@@ -247,7 +259,7 @@ fn run_release_upgrade(plan: ReleaseUpgradePlan) -> Result<()> {
         verify_checksum(&checksum_path, &archive_path)?;
 
         if download_optional_file(&plan.checksum_sig_url, &signature_path)? {
-            verify_signature(&checksum_path, &signature_path)?;
+            verify_signature(&checksum_path, &signature_path, &plan.temp_dir)?;
         }
 
         extract_archive(&plan.target, &archive_path, &plan.temp_dir)?;
@@ -507,13 +519,35 @@ fn command_output_digest(command: &mut Command) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("sha256 command returned empty output"))
 }
 
-fn verify_signature(checksum_path: &Path, signature_path: &Path) -> Result<()> {
+fn verify_signature(checksum_path: &Path, signature_path: &Path, temp_dir: &Path) -> Result<()> {
     if find_command("gpg").is_none() {
         eprintln!("Checksum signature present, but gpg is not installed; skipping verification.");
         return Ok(());
     }
 
-    let status = Command::new("gpg")
+    let gpg_home = create_gpg_home(temp_dir)?;
+    let key_path = temp_dir.join("lazycompass-release-signing.asc");
+    File::create(&key_path)
+        .with_context(|| format!("unable to create signing key file {}", key_path.display()))?
+        .write_all(RELEASE_SIGNING_KEY.as_bytes())
+        .with_context(|| format!("unable to write signing key file {}", key_path.display()))?;
+    let fingerprint = read_signing_key_fingerprint(&key_path)?;
+    if fingerprint != RELEASE_SIGNING_FINGERPRINT {
+        anyhow::bail!("release signing key fingerprint does not match the documented project key");
+    }
+
+    let import_status = gpg_command(&gpg_home)
+        .arg("--batch")
+        .arg("--import")
+        .arg(&key_path)
+        .status()
+        .context("failed to import release signing key")?;
+    if !import_status.success() {
+        anyhow::bail!("unable to import release signing key");
+    }
+
+    let status = gpg_command(&gpg_home)
+        .arg("--batch")
         .arg("--verify")
         .arg(signature_path)
         .arg(checksum_path)
@@ -523,6 +557,61 @@ fn verify_signature(checksum_path: &Path, signature_path: &Path) -> Result<()> {
         anyhow::bail!("checksum signature verification failed");
     }
     Ok(())
+}
+
+fn gpg_command(gpg_home: &Path) -> Command {
+    let mut command = Command::new("gpg");
+    command.arg("--homedir").arg(gpg_home);
+    command
+}
+
+fn create_gpg_home(temp_dir: &Path) -> Result<PathBuf> {
+    let gpg_home = temp_dir.join("gpg-home");
+    fs::create_dir(&gpg_home)
+        .with_context(|| format!("unable to create gpg home {}", gpg_home.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&gpg_home, fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("unable to set permissions on {}", gpg_home.display()))?;
+    }
+    Ok(gpg_home)
+}
+
+fn read_signing_key_fingerprint(key_path: &Path) -> Result<String> {
+    let output = Command::new("gpg")
+        .arg("--batch")
+        .arg("--show-keys")
+        .arg("--with-colons")
+        .arg(key_path)
+        .output()
+        .context("failed to inspect release signing key")?;
+    if !output.status.success() {
+        anyhow::bail!("unable to inspect release signing key");
+    }
+
+    let stdout = String::from_utf8(output.stdout)
+        .context("release signing key output was not valid UTF-8")?;
+    let fingerprint = stdout
+        .lines()
+        .find_map(|line| {
+            let mut parts = line.split(':');
+            if parts.next()? != "fpr" {
+                return None;
+            }
+            parts.nth(8).map(normalize_fingerprint)
+        })
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("release signing key fingerprint not found"))?;
+    Ok(fingerprint)
+}
+
+fn normalize_fingerprint(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_hexdigit())
+        .map(|ch| ch.to_ascii_uppercase())
+        .collect()
 }
 
 fn extract_archive(target: &ReleaseTarget, archive_path: &Path, destination: &Path) -> Result<()> {
@@ -679,9 +768,11 @@ fn escape_powershell_single_quoted(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        APP, DEFAULT_INSTALL_REPO, ReleaseUpgradePlan, SourceUpgradePlan, UpgradeContext,
-        UpgradePlan, detect_release_target_from, infer_install_root, normalize_version,
-        plan_upgrade, plan_upgrade_with_install_path, read_expected_checksum, release_archive_url,
+        APP, DEFAULT_INSTALL_REPO, RELEASE_SIGNING_FINGERPRINT, ReleaseTarget, ReleaseUpgradePlan,
+        SourceUpgradePlan, UpgradeContext, UpgradePlan, detect_release_target_from,
+        ensure_release_upgrade_supported, infer_install_root, normalize_fingerprint,
+        normalize_version, plan_upgrade, plan_upgrade_with_install_path, read_expected_checksum,
+        release_archive_url,
     };
     use crate::cli::UpgradeArgs;
     use std::path::Path;
@@ -748,10 +839,39 @@ mod tests {
     }
 
     #[test]
+    fn normalize_fingerprint_removes_spaces_and_case() {
+        assert_eq!(
+            normalize_fingerprint("5d7e f1cb 7fd9 672a 6d11 3b5c 7450 2b60 9a66 0baa"),
+            RELEASE_SIGNING_FINGERPRINT
+        );
+    }
+
+    #[test]
     fn infer_install_root_uses_parent_of_bin_dir() {
         let root = infer_install_root(Path::new("/tmp/lazycompass-test/bin/lazycompass"))
             .expect("install root");
         assert_eq!(root, Path::new("/tmp/lazycompass-test"));
+    }
+
+    #[test]
+    fn ensure_release_upgrade_supported_rejects_windows_beta_self_upgrade() {
+        let plan = ReleaseUpgradePlan {
+            target: ReleaseTarget {
+                slug: "windows-x64",
+                archive_ext: "zip",
+                binary_name: "lazycompass.exe",
+            },
+            archive_url: String::new(),
+            checksum_url: String::new(),
+            checksum_sig_url: String::new(),
+            asset_name: String::new(),
+            install_path: Path::new("/tmp/lazycompass.exe").to_path_buf(),
+            temp_dir: Path::new("/tmp/lazycompass").to_path_buf(),
+            no_modify_path: false,
+        };
+
+        let err = ensure_release_upgrade_supported(&plan).expect_err("expected windows beta error");
+        assert!(err.to_string().contains("Windows release self-upgrade"));
     }
 
     #[test]
