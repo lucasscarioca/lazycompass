@@ -383,24 +383,24 @@ const DOCUMENT_HINTS: &[HintGroup] = &[
         label: "back",
     },
     HintGroup {
+        actions: HINT_INLINE_RUN,
+        label: "quick query",
+    },
+    HintGroup {
         actions: HINT_EDITING,
-        label: "insert/edit/delete",
+        label: "edit",
     },
     HintGroup {
         actions: HINT_EXPORT,
-        label: "export/copy",
+        label: "export",
     },
     HintGroup {
         actions: HINT_SAVE,
-        label: "save query/agg",
-    },
-    HintGroup {
-        actions: HINT_INLINE_RUN,
-        label: "run inline",
+        label: "save",
     },
     HintGroup {
         actions: HINT_RUN,
-        label: "run saved",
+        label: "saved",
     },
     HintGroup {
         actions: HINT_PAGE,
@@ -520,7 +520,7 @@ const DOCUMENT_VIEW_HINTS: &[HintGroup] = &[
     },
     HintGroup {
         actions: HINT_EXPORT,
-        label: "export/copy",
+        label: "export",
     },
     HintGroup {
         actions: HINT_TOP_BOTTOM,

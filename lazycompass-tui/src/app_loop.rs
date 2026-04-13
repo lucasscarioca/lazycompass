@@ -97,6 +97,11 @@ impl App {
         loop {
             self.drain_load_results();
             terminal.draw(|frame| self.draw(frame))?;
+            if self.cursor_visible() {
+                terminal.show_cursor().context("unable to show cursor")?;
+            } else {
+                terminal.hide_cursor().context("unable to hide cursor")?;
+            }
             if event::poll(Duration::from_millis(200))? {
                 match event::read()? {
                     Event::Key(key) => {
@@ -694,6 +699,12 @@ impl App {
 
         self.last_g = false;
         Ok(false)
+    }
+
+    pub(crate) fn cursor_visible(&self) -> bool {
+        self.quick_query_modal.is_some()
+            || self.editor_prompt.is_some()
+            || self.path_prompt.is_some()
     }
 
     pub(crate) fn perform_confirm_action(&mut self, action: ConfirmAction) -> Result<()> {

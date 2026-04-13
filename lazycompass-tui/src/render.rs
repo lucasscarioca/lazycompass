@@ -75,6 +75,9 @@ impl App {
         }
         if self.quick_query_modal.is_some() {
             self.render_quick_query_modal(frame, layout[1]);
+            if let Some((x, y)) = self.quick_query_cursor(layout[1]) {
+                frame.set_cursor_position((x, y));
+            }
         }
 
         let footer = Paragraph::new(self.footer_lines())
@@ -1364,15 +1367,10 @@ impl App {
     pub(crate) fn footer_lines(&self) -> Vec<Line<'static>> {
         let hint = self.hint_line();
 
-        if let Some(modal) = &self.quick_query_modal {
-            let projection = if modal.projection.trim().is_empty() {
-                "projection is optional; blank omits the field"
-            } else {
-                "projection is filled from the current draft"
-            };
+        if self.quick_query_modal.is_some() {
             return vec![
-                Line::from("Tab/Shift+Tab field  Enter run  Ctrl+E editor  Esc cancel"),
-                Line::from(Span::styled(projection, self.theme.text_style())),
+                Line::from("Enter run  Tab next  Shift+Tab prev  Ctrl+E editor"),
+                Line::from("Esc cancel"),
             ];
         }
 
@@ -1443,6 +1441,37 @@ impl App {
         } else {
             vec![Line::from(hint), Line::from(" ")]
         }
+    }
+
+    pub(crate) fn quick_query_cursor(&self, area: Rect) -> Option<(u16, u16)> {
+        let modal = self.quick_query_modal.as_ref()?;
+        let modal_area = centered_rect(76, 62, area);
+        let inner = Block::default().borders(Borders::ALL).inner(modal_area);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Length(3),
+            ])
+            .split(inner);
+        let field_rect = match modal.focus {
+            QuickQueryField::Filter => chunks[1],
+            QuickQueryField::Projection => chunks[2],
+            QuickQueryField::Sort => chunks[3],
+            QuickQueryField::Limit => chunks[4],
+        };
+        let cursor = match modal.focus {
+            QuickQueryField::Filter => modal.filter_cursor,
+            QuickQueryField::Projection => modal.projection_cursor,
+            QuickQueryField::Sort => modal.sort_cursor,
+            QuickQueryField::Limit => modal.limit_cursor,
+        };
+        let x = field_rect.x.saturating_add(1).saturating_add(cursor as u16);
+        let y = field_rect.y.saturating_add(1);
+        Some((x.min(field_rect.right().saturating_sub(2)), y))
     }
 
     pub(crate) fn indexes_list_title(&self) -> String {

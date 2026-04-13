@@ -330,11 +330,12 @@ impl QuickQueryModalState {
 
     fn rendered_contents(&self) -> String {
         let filter = Self::normalized_text(&self.filter, "{}");
+        let projection = Self::normalized_text(&self.projection, "");
         let sort = Self::normalized_text(&self.sort, r#"{"_id": -1}"#);
         let limit = Self::normalized_text(&self.limit, "20");
         let mut lines = vec![format!("  \"filter\": {filter},")];
-        if !self.projection.trim().is_empty() {
-            lines.push(format!("  \"projection\": {},", self.projection.trim()));
+        if !projection.is_empty() {
+            lines.push(format!("  \"projection\": {projection},"));
         }
         lines.push(format!("  \"sort\": {sort},"));
         lines.push(format!("  \"limit\": {limit}"));
