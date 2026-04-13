@@ -87,6 +87,7 @@ impl App {
             inline_query_draft: None,
             inline_aggregation_draft: None,
             active_inline_draft: None,
+            quick_query_modal: None,
             query_save_source: QuerySaveSource::EmptyTemplate,
             aggregation_save_source: AggregationSaveSource::EmptyTemplate,
         })
@@ -385,6 +386,9 @@ impl App {
         if self.confirm.is_some() {
             return self.handle_confirm_key(key, terminal);
         }
+        if self.quick_query_modal.is_some() {
+            return self.handle_quick_query_modal_key(key, terminal);
+        }
 
         // Clear warnings and messages on any non-confirm keypress
         if !self.warnings.is_empty() {
@@ -607,6 +611,91 @@ impl App {
         Ok(false)
     }
 
+    pub(crate) fn handle_quick_query_modal_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<bool> {
+        let Some(mut modal) = self.quick_query_modal.take() else {
+            return Ok(false);
+        };
+
+        match key.code {
+            KeyCode::Esc => {
+                self.message = Some("cancelled".to_string());
+            }
+            KeyCode::Tab => {
+                modal.focus_next();
+                self.quick_query_modal = Some(modal);
+            }
+            KeyCode::BackTab => {
+                modal.focus_prev();
+                self.quick_query_modal = Some(modal);
+            }
+            KeyCode::Enter => match modal.build_payload() {
+                Ok(payload) => {
+                    self.inline_query_draft = Some(InlineQueryDraft {
+                        raw: modal.rendered_contents(),
+                        parsed: Some(payload.clone()),
+                    });
+                    self.active_inline_draft = Some(InlineDraftKind::Query);
+                    self.start_execute_inline_query(payload)?;
+                }
+                Err(error) => {
+                    self.quick_query_modal = Some(modal);
+                    self.set_error_message(&error);
+                }
+            },
+            KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.quick_query_modal = Some(modal);
+                let action = PendingEditorAction::RunInlineQuery;
+                let Some(_) = self.ensure_editor_command(action.clone())? else {
+                    self.last_g = false;
+                    return Ok(false);
+                };
+                if let Err(error) = self.perform_editor_action(action, terminal) {
+                    self.set_error_message(&error);
+                }
+            }
+            KeyCode::Backspace => {
+                modal.backspace();
+                self.quick_query_modal = Some(modal);
+            }
+            KeyCode::Delete => {
+                modal.delete();
+                self.quick_query_modal = Some(modal);
+            }
+            KeyCode::Left => {
+                modal.move_left();
+                self.quick_query_modal = Some(modal);
+            }
+            KeyCode::Right => {
+                modal.move_right();
+                self.quick_query_modal = Some(modal);
+            }
+            KeyCode::Home => {
+                modal.move_home();
+                self.quick_query_modal = Some(modal);
+            }
+            KeyCode::End => {
+                modal.move_end();
+                self.quick_query_modal = Some(modal);
+            }
+            KeyCode::Char(ch) => {
+                if !ch.is_control() {
+                    modal.insert_char(ch);
+                }
+                self.quick_query_modal = Some(modal);
+            }
+            _ => {
+                self.quick_query_modal = Some(modal);
+            }
+        }
+
+        self.last_g = false;
+        Ok(false)
+    }
+
     pub(crate) fn perform_confirm_action(&mut self, action: ConfirmAction) -> Result<()> {
         match action {
             ConfirmAction::DeleteDocument {
@@ -659,6 +748,8 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use lazycompass_core::{Config, ConnectionSpec};
     use lazycompass_storage::StorageSnapshot;
+    use ratatui::backend::CrosstermBackend;
+    use std::io::stdout;
 
     fn test_app() -> App {
         App::test_app()
@@ -699,6 +790,21 @@ mod tests {
             app.resolve_action(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE)),
             Some(KeyAction::GoTop)
         );
+    }
+
+    #[test]
+    fn run_inline_query_opens_quick_query_modal() {
+        let mut app = app_with_document_context();
+        app.screen = Screen::Documents;
+        let mut terminal = Terminal::new(CrosstermBackend::new(stdout())).expect("terminal");
+
+        app.run_inline_query(&mut terminal).expect("open modal");
+
+        let modal = app.quick_query_modal.expect("modal");
+        assert_eq!(modal.filter, "{}");
+        assert_eq!(modal.sort, r#"{"_id": -1}"#);
+        assert_eq!(modal.limit, "20");
+        assert_eq!(modal.focus, QuickQueryField::Filter);
     }
 
     #[test]

@@ -252,17 +252,17 @@ impl App {
 
     pub(crate) fn run_inline_query(
         &mut self,
-        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+        _terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> Result<()> {
         if self.screen != Screen::Documents {
             return Ok(());
         }
         let _ = self.selected_context()?;
-        let action = PendingEditorAction::RunInlineQuery;
-        let Some(_) = self.ensure_editor_command(action.clone())? else {
-            return Ok(());
-        };
-        self.perform_editor_action(action, terminal)
+        self.quick_query_modal = Some(QuickQueryModalState::from_draft(
+            self.inline_query_draft.as_ref(),
+        ));
+        self.message = None;
+        Ok(())
     }
 
     pub(crate) fn run_inline_aggregation(
@@ -919,11 +919,14 @@ impl App {
             .editor_command
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("editor command missing"))?;
-        let initial = self
-            .inline_query_draft
-            .as_ref()
-            .map(|draft| draft.raw.clone())
-            .unwrap_or(render_inline_query_template()?);
+        let initial = if let Some(modal) = &self.quick_query_modal {
+            modal.rendered_contents()
+        } else {
+            self.inline_query_draft
+                .as_ref()
+                .map(|draft| draft.raw.clone())
+                .unwrap_or(render_inline_query_template()?)
+        };
         let contents = self.open_editor(terminal, editor, "inline_query", &initial)?;
         if is_editor_cancelled(&contents, &initial) {
             self.message = Some("cancelled".to_string());
@@ -936,6 +939,7 @@ impl App {
                     parsed: Some(payload.clone()),
                 });
                 self.active_inline_draft = Some(InlineDraftKind::Query);
+                self.quick_query_modal = None;
                 self.start_execute_inline_query(payload)?;
             }
             Err(error) => {

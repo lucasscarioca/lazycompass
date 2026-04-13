@@ -155,6 +155,209 @@ enum InlineDraftKind {
     Aggregation,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuickQueryField {
+    Filter,
+    Sort,
+    Limit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct QuickQueryModalState {
+    filter: String,
+    projection: Option<String>,
+    sort: String,
+    limit: String,
+    focus: QuickQueryField,
+    filter_cursor: usize,
+    sort_cursor: usize,
+    limit_cursor: usize,
+}
+
+impl QuickQueryModalState {
+    fn from_draft(draft: Option<&InlineQueryDraft>) -> Self {
+        let payload = draft.and_then(|draft| draft.parsed.as_ref());
+        let filter = payload
+            .and_then(|payload| payload.filter.clone())
+            .unwrap_or_else(|| "{}".to_string());
+        let projection = payload.and_then(|payload| payload.projection.clone());
+        let sort = payload
+            .and_then(|payload| payload.sort.clone())
+            .unwrap_or_else(|| r#"{"_id": -1}"#.to_string());
+        let limit = payload
+            .and_then(|payload| payload.limit.map(|limit| limit.to_string()))
+            .unwrap_or_else(|| "20".to_string());
+        let filter_cursor = filter.len();
+        let sort_cursor = sort.len();
+        let limit_cursor = limit.len();
+        Self {
+            filter,
+            projection,
+            sort,
+            limit,
+            focus: QuickQueryField::Filter,
+            filter_cursor,
+            sort_cursor,
+            limit_cursor,
+        }
+    }
+
+    fn focus_next(&mut self) {
+        self.focus = match self.focus {
+            QuickQueryField::Filter => QuickQueryField::Sort,
+            QuickQueryField::Sort => QuickQueryField::Limit,
+            QuickQueryField::Limit => QuickQueryField::Filter,
+        };
+    }
+
+    fn focus_prev(&mut self) {
+        self.focus = match self.focus {
+            QuickQueryField::Filter => QuickQueryField::Limit,
+            QuickQueryField::Sort => QuickQueryField::Filter,
+            QuickQueryField::Limit => QuickQueryField::Sort,
+        };
+    }
+
+    fn field_text(&self, field: QuickQueryField) -> &str {
+        match field {
+            QuickQueryField::Filter => &self.filter,
+            QuickQueryField::Sort => &self.sort,
+            QuickQueryField::Limit => &self.limit,
+        }
+    }
+
+    fn field_text_mut(&mut self, field: QuickQueryField) -> &mut String {
+        match field {
+            QuickQueryField::Filter => &mut self.filter,
+            QuickQueryField::Sort => &mut self.sort,
+            QuickQueryField::Limit => &mut self.limit,
+        }
+    }
+
+    fn cursor_mut(&mut self, field: QuickQueryField) -> &mut usize {
+        match field {
+            QuickQueryField::Filter => &mut self.filter_cursor,
+            QuickQueryField::Sort => &mut self.sort_cursor,
+            QuickQueryField::Limit => &mut self.limit_cursor,
+        }
+    }
+
+    fn cursor(&self, field: QuickQueryField) -> usize {
+        match field {
+            QuickQueryField::Filter => self.filter_cursor,
+            QuickQueryField::Sort => self.sort_cursor,
+            QuickQueryField::Limit => self.limit_cursor,
+        }
+    }
+
+    fn move_left(&mut self) {
+        let field = self.focus;
+        let cursor = self.cursor(field);
+        let text = self.field_text(field);
+        let new_cursor = prev_char_boundary(text, cursor);
+        *self.cursor_mut(field) = new_cursor;
+    }
+
+    fn move_right(&mut self) {
+        let field = self.focus;
+        let cursor = self.cursor(field);
+        let text = self.field_text(field);
+        let new_cursor = next_char_boundary(text, cursor);
+        *self.cursor_mut(field) = new_cursor;
+    }
+
+    fn move_home(&mut self) {
+        let field = self.focus;
+        *self.cursor_mut(field) = 0;
+    }
+
+    fn move_end(&mut self) {
+        let field = self.focus;
+        let len = self.field_text(field).len();
+        *self.cursor_mut(field) = len;
+    }
+
+    fn insert_char(&mut self, ch: char) {
+        let field = self.focus;
+        let cursor = self.cursor(field);
+        let text = self.field_text_mut(field);
+        text.insert(cursor, ch);
+        *self.cursor_mut(field) = cursor + ch.len_utf8();
+    }
+
+    fn backspace(&mut self) {
+        let field = self.focus;
+        let cursor = self.cursor(field);
+        if cursor == 0 {
+            return;
+        }
+        let text = self.field_text_mut(field);
+        let start = prev_char_boundary(text, cursor);
+        text.drain(start..cursor);
+        *self.cursor_mut(field) = start;
+    }
+
+    fn delete(&mut self) {
+        let field = self.focus;
+        let cursor = self.cursor(field);
+        let text = self.field_text_mut(field);
+        if cursor >= text.len() {
+            return;
+        }
+        let end = next_char_boundary(text, cursor);
+        text.drain(cursor..end);
+    }
+
+    fn normalized_text(value: &str, default: &str) -> String {
+        if value.trim().is_empty() {
+            default.to_string()
+        } else {
+            value.trim().to_string()
+        }
+    }
+
+    fn rendered_contents(&self) -> String {
+        let filter = Self::normalized_text(&self.filter, "{}");
+        let sort = Self::normalized_text(&self.sort, r#"{"_id": -1}"#);
+        let limit = Self::normalized_text(&self.limit, "20");
+        let mut lines = vec![format!("  \"filter\": {filter},")];
+        if let Some(projection) = &self.projection {
+            if !projection.trim().is_empty() {
+                lines.push(format!("  \"projection\": {projection},"));
+            }
+        }
+        lines.push(format!("  \"sort\": {sort},"));
+        lines.push(format!("  \"limit\": {limit}"));
+        format!("{{\n{}\n}}", lines.join("\n"))
+    }
+
+    fn build_payload(&self) -> Result<InlineQueryPayload> {
+        parse_inline_query_payload(&self.rendered_contents())
+    }
+}
+
+fn prev_char_boundary(text: &str, index: usize) -> usize {
+    if index == 0 {
+        return 0;
+    }
+    text[..index]
+        .char_indices()
+        .last()
+        .map(|(idx, _)| idx)
+        .unwrap_or(0)
+}
+
+fn next_char_boundary(text: &str, index: usize) -> usize {
+    if index >= text.len() {
+        return text.len();
+    }
+    text[index..]
+        .chars()
+        .next()
+        .map(|ch| index + ch.len_utf8())
+        .unwrap_or(text.len())
+}
+
 #[derive(Debug, Clone)]
 enum QuerySaveSource {
     EmptyTemplate,
@@ -353,6 +556,7 @@ struct App {
     inline_query_draft: Option<InlineQueryDraft>,
     inline_aggregation_draft: Option<InlineAggregationDraft>,
     active_inline_draft: Option<InlineDraftKind>,
+    quick_query_modal: Option<QuickQueryModalState>,
     query_save_source: QuerySaveSource,
     aggregation_save_source: AggregationSaveSource,
 }

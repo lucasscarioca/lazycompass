@@ -73,6 +73,9 @@ impl App {
         if self.help_visible {
             self.render_help(frame, layout[1]);
         }
+        if self.quick_query_modal.is_some() {
+            self.render_quick_query_modal(frame, layout[1]);
+        }
 
         let footer = Paragraph::new(self.footer_lines())
             .style(self.theme.text_style())
@@ -1178,6 +1181,100 @@ impl App {
         frame.render_widget(help, help_area);
     }
 
+    pub(crate) fn render_quick_query_modal(&self, frame: &mut ratatui::Frame, area: Rect) {
+        let modal_area = centered_rect(76, 62, area);
+        frame.render_widget(Clear, modal_area);
+        let Some(modal) = &self.quick_query_modal else {
+            return;
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(self.theme.border_style())
+            .title(Line::from(Span::styled(
+                "Quick Query",
+                self.theme.title_style(),
+            )));
+        let inner = block.inner(modal_area);
+        frame.render_widget(block, modal_area);
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Length(3),
+            ])
+            .split(inner);
+
+        let instructions =
+            Paragraph::new("Tab/Shift+Tab switch fields  Enter run  Ctrl+E editor  Esc cancel")
+                .style(self.theme.text_style())
+                .wrap(Wrap { trim: false });
+        frame.render_widget(instructions, chunks[0]);
+        self.render_quick_query_field(
+            frame,
+            chunks[1],
+            "Filter",
+            &modal.filter,
+            modal.focus == QuickQueryField::Filter,
+        );
+        self.render_quick_query_field(
+            frame,
+            chunks[2],
+            "Sort",
+            &modal.sort,
+            modal.focus == QuickQueryField::Sort,
+        );
+        self.render_quick_query_field(
+            frame,
+            chunks[3],
+            "Limit",
+            &modal.limit,
+            modal.focus == QuickQueryField::Limit,
+        );
+    }
+
+    fn render_quick_query_field(
+        &self,
+        frame: &mut ratatui::Frame,
+        area: Rect,
+        title: &str,
+        value: &str,
+        active: bool,
+    ) {
+        let title = if active {
+            format!("▶ {title}")
+        } else {
+            title.to_string()
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(if active {
+                self.theme.title_style()
+            } else {
+                self.theme.border_style().add_modifier(Modifier::DIM)
+            })
+            .title(Line::from(Span::styled(
+                title,
+                if active {
+                    self.theme.title_style()
+                } else {
+                    self.theme.text_style()
+                },
+            )));
+        let style = if active {
+            self.theme.selection_style()
+        } else {
+            self.theme.text_style()
+        };
+        let input = Paragraph::new(value.to_string())
+            .style(style)
+            .block(block)
+            .wrap(Wrap { trim: false });
+        frame.render_widget(input, area);
+    }
+
     pub(crate) fn help_lines(&self) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         for group in hint_groups(self.screen) {
@@ -1246,6 +1343,18 @@ impl App {
 
     pub(crate) fn footer_lines(&self) -> Vec<Line<'static>> {
         let hint = self.hint_line();
+
+        if let Some(modal) = &self.quick_query_modal {
+            let projection = if modal.projection.is_some() {
+                "projection is preserved from the current draft"
+            } else {
+                "Ctrl+E opens the editor flow"
+            };
+            return vec![
+                Line::from("Tab/Shift+Tab field  Enter run  Ctrl+E editor  Esc cancel"),
+                Line::from(Span::styled(projection, self.theme.text_style())),
+            ];
+        }
 
         if let Some(editor_prompt) = &self.editor_prompt {
             let input_display = if editor_prompt.input.is_empty() {
