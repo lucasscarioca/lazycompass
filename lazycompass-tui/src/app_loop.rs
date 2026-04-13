@@ -463,7 +463,7 @@ impl App {
             KeyAction::CopyResults => self.copy_results()?,
             KeyAction::SaveQuery => self.save_query(terminal)?,
             KeyAction::SaveAggregation => self.save_aggregation(terminal)?,
-            KeyAction::RunInlineQuery => self.run_inline_query(terminal)?,
+            KeyAction::RunInlineQuery => self.run_inline_query()?,
             KeyAction::RunInlineAggregation => self.run_inline_aggregation(terminal)?,
             KeyAction::RunSavedQuery => self.run_saved_query()?,
             KeyAction::RunSavedAggregation => self.run_saved_aggregation()?,
@@ -759,8 +759,6 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use lazycompass_core::{Config, ConnectionSpec};
     use lazycompass_storage::StorageSnapshot;
-    use ratatui::backend::CrosstermBackend;
-    use std::io::stdout;
 
     fn test_app() -> App {
         App::test_app()
@@ -807,9 +805,7 @@ mod tests {
     fn run_inline_query_opens_quick_query_modal() {
         let mut app = app_with_document_context();
         app.screen = Screen::Documents;
-        let mut terminal = Terminal::new(CrosstermBackend::new(stdout())).expect("terminal");
-
-        app.run_inline_query(&mut terminal).expect("open modal");
+        app.run_inline_query().expect("open modal");
 
         let modal = app.quick_query_modal.expect("modal");
         assert_eq!(modal.filter, "{}");

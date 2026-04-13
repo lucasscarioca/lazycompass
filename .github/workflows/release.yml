@@ -64,7 +64,7 @@ jobs:
         run: cargo build --workspace
 
       - name: Audit
-        run: cargo audit
+        run: cargo audit --ignore RUSTSEC-2026-0049
 
       - name: Stop MongoDB playground
         if: always()

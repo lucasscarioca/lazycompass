@@ -250,10 +250,7 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn run_inline_query(
-        &mut self,
-        _terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    ) -> Result<()> {
+    pub(crate) fn run_inline_query(&mut self) -> Result<()> {
         if self.screen != Screen::Documents {
             return Ok(());
         }

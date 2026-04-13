@@ -1140,7 +1140,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "lazycompass"
-version = "0.11.3"
+version = "0.11.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -1158,7 +1158,7 @@ dependencies = [
 
 [[package]]
 name = "lazycompass-core"
-version = "0.11.3"
+version = "0.11.4"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
@@ -1166,7 +1166,7 @@ dependencies = [
 
 [[package]]
 name = "lazycompass-mongo"
-version = "0.11.3"
+version = "0.11.4"
 dependencies = [
  "anyhow",
  "futures",
@@ -1178,7 +1178,7 @@ dependencies = [
 
 [[package]]
 name = "lazycompass-output"
-version = "0.11.3"
+version = "0.11.4"
 dependencies = [
  "anyhow",
  "lazycompass-core",
@@ -1189,7 +1189,7 @@ dependencies = [
 
 [[package]]
 name = "lazycompass-storage"
-version = "0.11.3"
+version = "0.11.4"
 dependencies = [
  "anyhow",
  "dirs",
@@ -1202,7 +1202,7 @@ dependencies = [
 
 [[package]]
 name = "lazycompass-tui"
-version = "0.11.3"
+version = "0.11.4"
 dependencies = [
  "anyhow",
  "base64",
@@ -1428,9 +1428,9 @@ checksum = "224484c5d09285a7b8cb0a0c117e847ebd14cb6e4470ecf68cdb89c503b0edb9"
 
 [[package]]
 name = "mongodb"
-version = "3.5.1"
+version = "3.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "803dd859e8afa084c255a8effd8000ff86f7c8076a50cd6d8c99e8f3496f75c2"
+checksum = "2c5941683db2ab2697f71e58dc0319024e808d3b28e7cf20f4bfb445fe54a30b"
 dependencies = [
  "base64",
  "bitflags 2.10.0",
@@ -1474,9 +1474,9 @@ dependencies = [
 
 [[package]]
 name = "mongodb-internal-macros"
-version = "3.5.1"
+version = "3.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a973ef3dd3dbc6f6e65bbdecfd9ec5e781b9e7493b0f369a7c62e35d8e5ae2c8"
+checksum = "47021a12bbf0dffde9c890fa2d36ff6ae342c532016226b04a42301b2b912660"
 dependencies = [
  "macro_magic",
  "proc-macro2",
@@ -2019,9 +2019,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.36"
+version = "0.23.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c665f33d38cea657d9614f766881e4d510e0eda4239891eea56b4cadcf01801b"
+checksum = "69f9466fb2c14ea04357e91413efb882e2a6d4a406e625449bc0a5d360d53a21"
 dependencies = [
  "log",
  "once_cell",
