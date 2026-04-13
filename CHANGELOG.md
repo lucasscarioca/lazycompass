@@ -6,6 +6,13 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
+## [0.11.5] - 2026-04-13
+
+- Dev: move the quick-query modal test off a real terminal so CI can run it reliably in headless environments.
+- Dev: pin `cargo audit` to ignore the currently-unfixed `rustls-webpki` advisory so release verification stays green until crates.io publishes a patched release.
+- Dev: move the release workflow's Intel macOS verification job onto a supported runner label.
+- Dependency: update the MongoDB driver to `3.5.2`.
+
 ## [0.11.4] - 2026-04-13
 
 - Dev: remove the quick-query modal test's dependency on a real terminal so CI can run it reliably in headless environments.
