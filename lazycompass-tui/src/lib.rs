@@ -158,6 +158,7 @@ enum InlineDraftKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum QuickQueryField {
     Filter,
+    Projection,
     Sort,
     Limit,
 }
@@ -165,11 +166,12 @@ enum QuickQueryField {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct QuickQueryModalState {
     filter: String,
-    projection: Option<String>,
+    projection: String,
     sort: String,
     limit: String,
     focus: QuickQueryField,
     filter_cursor: usize,
+    projection_cursor: usize,
     sort_cursor: usize,
     limit_cursor: usize,
 }
@@ -180,7 +182,9 @@ impl QuickQueryModalState {
         let filter = payload
             .and_then(|payload| payload.filter.clone())
             .unwrap_or_else(|| "{}".to_string());
-        let projection = payload.and_then(|payload| payload.projection.clone());
+        let projection = payload
+            .and_then(|payload| payload.projection.clone())
+            .unwrap_or_default();
         let sort = payload
             .and_then(|payload| payload.sort.clone())
             .unwrap_or_else(|| r#"{"_id": -1}"#.to_string());
@@ -188,6 +192,7 @@ impl QuickQueryModalState {
             .and_then(|payload| payload.limit.map(|limit| limit.to_string()))
             .unwrap_or_else(|| "20".to_string());
         let filter_cursor = filter.len();
+        let projection_cursor = projection.len();
         let sort_cursor = sort.len();
         let limit_cursor = limit.len();
         Self {
@@ -197,6 +202,7 @@ impl QuickQueryModalState {
             limit,
             focus: QuickQueryField::Filter,
             filter_cursor,
+            projection_cursor,
             sort_cursor,
             limit_cursor,
         }
@@ -204,7 +210,8 @@ impl QuickQueryModalState {
 
     fn focus_next(&mut self) {
         self.focus = match self.focus {
-            QuickQueryField::Filter => QuickQueryField::Sort,
+            QuickQueryField::Filter => QuickQueryField::Projection,
+            QuickQueryField::Projection => QuickQueryField::Sort,
             QuickQueryField::Sort => QuickQueryField::Limit,
             QuickQueryField::Limit => QuickQueryField::Filter,
         };
@@ -213,7 +220,8 @@ impl QuickQueryModalState {
     fn focus_prev(&mut self) {
         self.focus = match self.focus {
             QuickQueryField::Filter => QuickQueryField::Limit,
-            QuickQueryField::Sort => QuickQueryField::Filter,
+            QuickQueryField::Projection => QuickQueryField::Filter,
+            QuickQueryField::Sort => QuickQueryField::Projection,
             QuickQueryField::Limit => QuickQueryField::Sort,
         };
     }
@@ -221,6 +229,7 @@ impl QuickQueryModalState {
     fn field_text(&self, field: QuickQueryField) -> &str {
         match field {
             QuickQueryField::Filter => &self.filter,
+            QuickQueryField::Projection => &self.projection,
             QuickQueryField::Sort => &self.sort,
             QuickQueryField::Limit => &self.limit,
         }
@@ -229,6 +238,7 @@ impl QuickQueryModalState {
     fn field_text_mut(&mut self, field: QuickQueryField) -> &mut String {
         match field {
             QuickQueryField::Filter => &mut self.filter,
+            QuickQueryField::Projection => &mut self.projection,
             QuickQueryField::Sort => &mut self.sort,
             QuickQueryField::Limit => &mut self.limit,
         }
@@ -237,6 +247,7 @@ impl QuickQueryModalState {
     fn cursor_mut(&mut self, field: QuickQueryField) -> &mut usize {
         match field {
             QuickQueryField::Filter => &mut self.filter_cursor,
+            QuickQueryField::Projection => &mut self.projection_cursor,
             QuickQueryField::Sort => &mut self.sort_cursor,
             QuickQueryField::Limit => &mut self.limit_cursor,
         }
@@ -245,6 +256,7 @@ impl QuickQueryModalState {
     fn cursor(&self, field: QuickQueryField) -> usize {
         match field {
             QuickQueryField::Filter => self.filter_cursor,
+            QuickQueryField::Projection => self.projection_cursor,
             QuickQueryField::Sort => self.sort_cursor,
             QuickQueryField::Limit => self.limit_cursor,
         }
@@ -321,10 +333,8 @@ impl QuickQueryModalState {
         let sort = Self::normalized_text(&self.sort, r#"{"_id": -1}"#);
         let limit = Self::normalized_text(&self.limit, "20");
         let mut lines = vec![format!("  \"filter\": {filter},")];
-        if let Some(projection) = &self.projection {
-            if !projection.trim().is_empty() {
-                lines.push(format!("  \"projection\": {projection},"));
-            }
+        if !self.projection.trim().is_empty() {
+            lines.push(format!("  \"projection\": {},", self.projection.trim()));
         }
         lines.push(format!("  \"sort\": {sort},"));
         lines.push(format!("  \"limit\": {limit}"));

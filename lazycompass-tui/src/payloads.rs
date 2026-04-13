@@ -3,6 +3,7 @@ use lazycompass_mongo::normalize_json_text;
 pub(crate) fn render_inline_query_template() -> Result<String> {
     serde_json::to_string_pretty(&serde_json::json!({
         "filter": {},
+        "projection": null,
         "sort": {
             "_id": -1
         },
@@ -395,7 +396,9 @@ mod tests {
         let parsed = parse_inline_query_payload(&rendered).expect("parse");
         assert_eq!(parsed.limit, Some(20));
         assert!(parsed.filter.is_some());
+        assert!(parsed.projection.is_none());
         assert!(parsed.sort.is_some());
+        assert!(rendered.contains("\"projection\""));
     }
 
     #[test]

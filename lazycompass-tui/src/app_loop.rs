@@ -803,6 +803,7 @@ mod tests {
         let modal = app.quick_query_modal.expect("modal");
         assert_eq!(modal.filter, "{}");
         assert_eq!(modal.sort, r#"{"_id": -1}"#);
+        assert_eq!(modal.projection, "");
         assert_eq!(modal.limit, "20");
         assert_eq!(modal.focus, QuickQueryField::Filter);
     }

@@ -1204,6 +1204,7 @@ impl App {
                 Constraint::Length(3),
                 Constraint::Length(3),
                 Constraint::Length(3),
+                Constraint::Length(3),
             ])
             .split(inner);
 
@@ -1217,20 +1218,31 @@ impl App {
             chunks[1],
             "Filter",
             &modal.filter,
+            false,
             modal.focus == QuickQueryField::Filter,
         );
         self.render_quick_query_field(
             frame,
             chunks[2],
-            "Sort",
-            &modal.sort,
-            modal.focus == QuickQueryField::Sort,
+            "Projection (optional)",
+            &modal.projection,
+            true,
+            modal.focus == QuickQueryField::Projection,
         );
         self.render_quick_query_field(
             frame,
             chunks[3],
+            "Sort",
+            &modal.sort,
+            false,
+            modal.focus == QuickQueryField::Sort,
+        );
+        self.render_quick_query_field(
+            frame,
+            chunks[4],
             "Limit",
             &modal.limit,
+            false,
             modal.focus == QuickQueryField::Limit,
         );
     }
@@ -1241,12 +1253,18 @@ impl App {
         area: Rect,
         title: &str,
         value: &str,
+        optional: bool,
         active: bool,
     ) {
         let title = if active {
             format!("▶ {title}")
         } else {
             title.to_string()
+        };
+        let display = if optional && value.trim().is_empty() {
+            "[optional]"
+        } else {
+            value
         };
         let block = Block::default()
             .borders(Borders::ALL)
@@ -1264,11 +1282,13 @@ impl App {
                 },
             )));
         let style = if active {
-            self.theme.selection_style()
+            self.theme.text_style().add_modifier(Modifier::BOLD)
+        } else if optional && value.trim().is_empty() {
+            self.theme.text_style().add_modifier(Modifier::DIM)
         } else {
             self.theme.text_style()
         };
-        let input = Paragraph::new(value.to_string())
+        let input = Paragraph::new(display.to_string())
             .style(style)
             .block(block)
             .wrap(Wrap { trim: false });
@@ -1345,10 +1365,10 @@ impl App {
         let hint = self.hint_line();
 
         if let Some(modal) = &self.quick_query_modal {
-            let projection = if modal.projection.is_some() {
-                "projection is preserved from the current draft"
+            let projection = if modal.projection.trim().is_empty() {
+                "projection is optional; blank omits the field"
             } else {
-                "Ctrl+E opens the editor flow"
+                "projection is filled from the current draft"
             };
             return vec![
                 Line::from("Tab/Shift+Tab field  Enter run  Ctrl+E editor  Esc cancel"),
