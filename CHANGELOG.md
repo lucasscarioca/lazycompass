@@ -6,14 +6,13 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 
 ## [Unreleased]
 
-- Security: reject symlinked config roots on read, not just on write, so repo/global config loading cannot escape via `.lazycompass` or config-dir symlinks.
-- Security: harden export and logging writes against symlink traversal by replacing raw output writes with checked paths.
-- Security: pin automated release signature verification to the bundled LazyCompass signing key in both `install.sh` and `lazycompass upgrade`.
-- Security: make the Unix installer fail closed when checksum verification tools are unavailable.
-- Beta: block Windows self-upgrade with a clear manual-install fallback until the Windows release path is promoted beyond beta.
-- CI: add macOS validation to normal CI and require macOS/Windows build+test coverage in the tagged release workflow.
-- CLI: clean up editor temp files on failure paths for config-add and document-edit flows.
-- Docs: document the installer tool requirements, pinned signing-key verification model, and planned `1.x` stability contract.
+## [0.11.3] - 2026-04-13
+
+- TUI: add a responsive hierarchical layout for browsing connections, databases, collections, indexes, and documents with parent-context panes preserved on wider terminals.
+- TUI: add arrow key support alongside vim-style motions for list navigation and pane traversal.
+- TUI: replace the editor-first inline query flow with a quick query modal using filter, projection, sort, and limit fields, plus a shortcut back to the `$EDITOR` template.
+- TUI: improve quick query focus styling, restore a visible cursor in the modal, and simplify the footer so the quick query shortcut is emphasized.
+- TUI: make the active pane border stand out more clearly from inactive context panes.
 
 ## [0.11.2] - 2026-03-10
 
