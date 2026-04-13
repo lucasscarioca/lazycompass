@@ -52,8 +52,18 @@ const KEY_BINDINGS: &[KeyBinding] = &[
         modifiers: KeyModifiers::NONE,
     },
     KeyBinding {
+        action: KeyAction::MoveDown,
+        code: KeyCode::Down,
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
         action: KeyAction::MoveUp,
         code: KeyCode::Char('k'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::MoveUp,
+        code: KeyCode::Up,
         modifiers: KeyModifiers::NONE,
     },
     KeyBinding {
@@ -62,8 +72,18 @@ const KEY_BINDINGS: &[KeyBinding] = &[
         modifiers: KeyModifiers::NONE,
     },
     KeyBinding {
+        action: KeyAction::Back,
+        code: KeyCode::Left,
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
         action: KeyAction::Forward,
         code: KeyCode::Char('l'),
+        modifiers: KeyModifiers::NONE,
+    },
+    KeyBinding {
+        action: KeyAction::Forward,
+        code: KeyCode::Right,
         modifiers: KeyModifiers::NONE,
     },
     KeyBinding {
@@ -548,10 +568,10 @@ pub(crate) fn hint_groups(screen: Screen) -> &'static [HintGroup] {
 fn action_keys(action: KeyAction) -> &'static [&'static str] {
     match action {
         KeyAction::Quit => &["q"],
-        KeyAction::MoveDown => &["j"],
-        KeyAction::MoveUp => &["k"],
-        KeyAction::Back => &["h"],
-        KeyAction::Forward => &["l", "Enter"],
+        KeyAction::MoveDown => &["j", "↓"],
+        KeyAction::MoveUp => &["k", "↑"],
+        KeyAction::Back => &["h", "←"],
+        KeyAction::Forward => &["l", "Enter", "→"],
         KeyAction::GoTop => &["gg"],
         KeyAction::GoBottom => &["G"],
         KeyAction::NextPage => &["PgDn"],
@@ -585,6 +605,7 @@ pub(crate) fn keys_for_actions(actions: &[KeyAction]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::collections::HashSet;
 
     #[test]
@@ -594,5 +615,25 @@ mod tests {
             let key = format!("{:?}:{:?}", binding.code, binding.modifiers);
             assert!(seen.insert(key), "duplicate key binding: {binding:?}");
         }
+    }
+
+    #[test]
+    fn arrow_keys_map_to_vim_actions() {
+        assert_eq!(
+            action_for_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+            Some(KeyAction::MoveDown)
+        );
+        assert_eq!(
+            action_for_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+            Some(KeyAction::MoveUp)
+        );
+        assert_eq!(
+            action_for_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)),
+            Some(KeyAction::Back)
+        );
+        assert_eq!(
+            action_for_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)),
+            Some(KeyAction::Forward)
+        );
     }
 }
