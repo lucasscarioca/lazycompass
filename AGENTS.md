@@ -21,9 +21,8 @@ Workspace crates:
 Key docs:
 
 - [`README.md`](./README.md): product overview and user-facing entrypoint
-- [`CONFIGURATION.md`](./CONFIGURATION.md): config schema and defaults
-- [`QUERY_FORMAT.md`](./QUERY_FORMAT.md): saved query and aggregation formats
 - [`dev/qa/README.md`](./dev/qa/README.md): local MongoDB playground and manual QA
+- [`CHANGELOG.md`](./CHANGELOG.md): release notes and notable changes
 
 ## Build / Lint / Test Commands
 
@@ -163,7 +162,7 @@ Follow Rust 2024 edition idioms and keep changes minimal and consistent.
 ### Serialization and Config
 
 - Use `serde` for config and persisted data
-- Keep config TOML and saved spec JSON schemas stable; document changes in [`CONFIGURATION.md`](./CONFIGURATION.md), [`QUERY_FORMAT.md`](./QUERY_FORMAT.md), and [`CHANGELOG.md`](./CHANGELOG.md)
+- Keep config TOML and saved spec JSON schemas stable; document user-facing changes in [`README.md`](./README.md) and [`CHANGELOG.md`](./CHANGELOG.md)
 - Query/aggregation `filter`/`pipeline` stored as JSON strings
 
 ### Async and Runtime
@@ -215,7 +214,5 @@ Follow Rust 2024 edition idioms and keep changes minimal and consistent.
 ## Release & repo maintenance
 
 - Update [`CHANGELOG.md`](./CHANGELOG.md) for user-visible changes; keep entries scoped to the release.
-- Follow [`RELEASE.md`](./RELEASE.md) for versioning/tagging and release steps before publishing.
 - Review security-sensitive dependency, config, installer, and write-safety changes explicitly before publishing.
-- Sync config defaults and examples per [`CONFIGURATION.md`](./CONFIGURATION.md) when changing config/saved spec schemas or paths.
-- Validate query/aggregation format updates against [`QUERY_FORMAT.md`](./QUERY_FORMAT.md), and note any schema changes in [`CHANGELOG.md`](./CHANGELOG.md).
+- Keep config defaults and examples aligned with the README when changing config/saved spec schemas or paths.

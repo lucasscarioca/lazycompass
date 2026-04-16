@@ -55,7 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/lucasscarioca/lazycompass/main/inst
 ```
 
 On Windows, use a GitHub Releases zip or install from source with Cargo. The shell installer is Unix-only.
-The Unix installer requires `curl`, `tar`, and either `sha256sum` or `shasum`. If `gpg` is installed and the release ships a signature, the installer verifies it against the bundled LazyCompass release key.
+The Unix installer requires `curl`, `tar`, and either `sha256sum` or `shasum`. It verifies release checksums during install.
 
 Install from source with Cargo:
 
@@ -69,9 +69,7 @@ Upgrade an installed binary:
 lazycompass upgrade
 ```
 
-`lazycompass upgrade` downloads the matching release archive and verifies checksums. If `gpg` is installed and the release ships a signature, it also verifies the checksum signature against the bundled LazyCompass release key. Windows x64 support is currently `beta`; use a GitHub Releases zip or `--from-source` there instead of self-upgrade.
-
-For manual verification and signing details, see [SECURITY.md](./SECURITY.md). Signed releases use [keys/lazycompass-release-signing.asc](./keys/lazycompass-release-signing.asc).
+`lazycompass upgrade` downloads the matching release archive and verifies checksums. Windows x64 support is currently `beta`; use a GitHub Releases zip or `--from-source` there instead of self-upgrade.
 
 ## Quick Start
 
@@ -216,31 +214,6 @@ Repo config overrides global config. Saved queries and aggregations live in repo
 
 - `.lazycompass/queries/*.json`
 - `.lazycompass/aggregations/*.json`
-
-Details:
-
-- [CONFIGURATION.md](./CONFIGURATION.md)
-- [QUERY_FORMAT.md](./QUERY_FORMAT.md)
-
-## Docs
-
-- [CONFIGURATION.md](./CONFIGURATION.md)
-- [QUERY_FORMAT.md](./QUERY_FORMAT.md)
-- [VERSIONING.md](./VERSIONING.md)
-- [RELEASE.md](./RELEASE.md)
-- [SECURITY.md](./SECURITY.md)
-- [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
-- [SUPPORT.md](./SUPPORT.md)
-- [CHANGELOG.md](./CHANGELOG.md)
-- [dev/qa/README.md](./dev/qa/README.md)
-
-## Stability
-
-Current tagged releases are still pre-`1.0`. The target `1.x` contract is stable on Linux and macOS, while Windows remains `beta`; see [VERSIONING.md](./VERSIONING.md) and [CHANGELOG.md](./CHANGELOG.md).
-
-## Contributing
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 

@@ -1,8 +1,1 @@
 blank_issues_enabled: false
-contact_links:
-  - name: Security report
-    url: https://github.com/lucasscarioca/lazycompass/security/advisories/new
-    about: Use a private report for undisclosed security issues.
-  - name: Support
-    url: https://github.com/lucasscarioca/lazycompass/issues/new
-    about: Use the issue templates for usage questions and bug reports.

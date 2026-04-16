@@ -113,7 +113,7 @@ The format is based on Keep a Changelog and this project follows pre-1.0 Semanti
 - CLI: add insert and update subcommands for documents.
 - Config: load optional `.env` files for interpolation without overriding real env vars.
 - Tests: print explicit skip reason when the playground integration test is not enabled.
-- Docs: remove stale `SECURITY.md` reference from README.
+- Docs: simplify repo docs and remove policy references from README.
 - Dev workflow: remove Lefthook config; run checks manually before commit/push.
 - Dev workflow: allow direct pushes to `main`; CI now runs on `main` pushes and manual dispatch.
 
