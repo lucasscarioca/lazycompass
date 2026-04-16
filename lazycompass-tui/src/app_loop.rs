@@ -104,11 +104,10 @@ impl App {
             }
             if event::poll(Duration::from_millis(200))? {
                 match event::read()? {
-                    Event::Key(key) => {
-                        if self.handle_key(key, terminal)? {
-                            return Ok(());
-                        }
+                    Event::Key(key) if self.handle_key(key, terminal)? => {
+                        return Ok(());
                     }
+                    Event::Key(_) => {}
                     Event::Resize(_, _) => {}
                     _ => {}
                 }
